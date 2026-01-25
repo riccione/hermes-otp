@@ -48,6 +48,7 @@ Build with:
 - [Magic-crypt](https://crates.io/crates/magic-crypt)
 - [Data-encoding](https://crates.io/crates/data-encoding)
 - [Totp-lite](https://crates.io/crates/totp-lite)
+- [console](https://crates.io/crates/console)
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 

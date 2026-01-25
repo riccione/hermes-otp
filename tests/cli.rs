@@ -135,6 +135,7 @@ fn rename_alias_isolated_flow() -> Result<(), Box<dyn std::error::Error>> {
         .arg("ls")
         .args(&["gh"])
         .args(&["--password", PASSWORD])
+        .arg("-q")
         .assert()
         .success()
         .stdout(predicate::str::is_match(r"^\d{6}")?);

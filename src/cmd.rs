@@ -2,9 +2,9 @@ use crate::args::OutputFormat;
 use crate::file;
 use crate::models::Record;
 use crate::otp;
-use crate::ui;
 use data_encoding::BASE32_NOPAD;
 use std::io;
+use crate::ui::Table;
 use std::path::{Path, PathBuf};
 
 fn sanitize_and_validate_code(code: &str) -> Result<String, String> {
@@ -190,10 +190,18 @@ pub fn ls(
     };
 
     let rem = otp::get_remaining_seconds();
-
     match format {
         OutputFormat::Json => print_json(&filtered, &pass, rem),
-        OutputFormat::Table => print_table(&filtered, &pass, rem, alias_filter.is_some(), quiet),
+        OutputFormat::Table =>
+            {
+                if quiet  {
+                    print_table(&filtered, &pass, rem, alias_filter.is_some(), quiet);
+                }
+                else {
+                    let table = Table::new(&filtered, &pass, alias_filter.is_some());
+                    table.render();
+                }
+            }
     }
 
     Ok(())
@@ -211,18 +219,35 @@ fn get_otp_display(record: &Record, pass: &str) -> String {
         .unwrap_or_else(|_| "Error Invalid secret or decryption failed".to_string())
 }
 
-fn print_table(records: &[&Record], pass: &str, rem: u64, is_single_alias: bool, quiet: bool) {
-    if is_single_alias && records.len() == 1 {
-        let code = get_otp_display(records[0], pass);
-        ui::print_otp_with_progress(&code, rem, quiet);
-        return;
-    }
+pub fn print_table(
+    records: &[&Record],
+    pass: &str,
+    rem: u64,
+    is_single_alias: bool,
+    quiet: bool
+) {
+    let mut bar = String::from("");
+    if !quiet {
+        let bar_width = 20;
+        let safe_rem = rem.min(30) as usize;
 
-    println!("{0: <15} | {1: <10} | {2: <4}", "Alias", "OTP", "Rem");
-    println!("{:-<15}-|-{:-<10}-|-{:-<4}", "", "", "");
-    for r in records {
-        let otp = get_otp_display(r, pass);
-        println!("{0: <15} | {1: <10} | {2:}s", r.alias, otp, rem);
+        let filled = (safe_rem * bar_width) / 30;
+        let empty = bar_width - filled;
+        bar = format!("[{0}{1}]", "#".repeat(filled), ".".repeat(empty));
+    }
+    if is_single_alias && records.len() == 1 {
+        let otp = get_otp_display(records[0], pass);
+        if !quiet {
+            eprintln!("{0} {1: <3} remaining", bar, rem.to_string() + "s");
+        }
+        println!("{}", otp);
+    } else {
+        println!("{0: <15} | {1: <10} | {2: <4}", "Alias", "OTP", "Rem");
+        println!("{:-<15}-|-{:-<10}-|-{:-<4}", "", "", "");
+        for r in records {
+            let otp = get_otp_display(r, pass);
+            println!("{0: <15} | {1: <10} | {2: <3} {3}", r.alias, otp, rem.to_string() + "s", bar);
+        }
     }
 }
 

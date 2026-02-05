@@ -159,29 +159,45 @@ pub fn remove(path: &Path, alias: &str) -> Result<(), String> {
 pub fn ls(
     path: &Path,
     alias_filter: &Option<String>,
-    is_unencrypt: &bool,
+    is_unencrypt: bool,
     password: &Option<String>,
     format: &OutputFormat,
     quiet: bool,
+    exact_match: bool,
 ) -> Result<(), String> {
     let records = file::read_codex(path)?;
 
     // apply search filter
-    let filtered: Vec<&Record> = records
-        .iter()
-        .filter(|r| match alias_filter {
-            // partial match
-            Some(f) => r.alias.to_lowercase().contains(&f.to_lowercase()),
-            // display everything
-            None => true,
-        })
-        .collect();
+    let filtered: Vec<&Record> = if let Some(filter) = alias_filter {
+        let filter_lower = filter.to_lowercase();
+        records
+            .iter()
+            .filter(|r| {
+                let alias_lower = r.alias.to_lowercase();
+                if exact_match {
+                    alias_lower == filter_lower
+                } else {
+                    alias_lower.contains(&filter_lower)
+                }
+            })
+            .collect()
+    } else {
+        records.iter().collect()
+    };
 
     if filtered.is_empty() {
-        return Err("Alias not found.".into());
+        return Err(if let Some(filter) = alias_filter {
+            if exact_match {
+                format!("No record found with exact alias '{}'", filter)
+            } else {
+                format!("No records found matching '{}'", filter)
+            }
+        } else {
+            "No records found".into()
+        });
     }
 
-    let needs_password = !*is_unencrypt && filtered.iter().any(|r| !r.is_unencrypted);
+    let needs_password = !is_unencrypt && filtered.iter().any(|r| !r.is_unencrypted);
 
     let pass = if needs_password {
         get_effective_password(password)

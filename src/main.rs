@@ -80,14 +80,16 @@ fn run(command: Commands, codex_path: PathBuf) -> Result<(), String> {
             quiet,
             format,
             encryption,
+            exact,
         } => {
             cmd::ls(
                 &codex_path,
                 &alias,
-                &encryption.unencrypt,
+                encryption.unencrypt,
                 &encryption.password,
                 &format,
                 quiet,
+                exact,
             )?;
         }
 

@@ -146,7 +146,7 @@ fn rename_alias_isolated_flow() -> Result<(), Box<dyn std::error::Error>> {
         .args(&["--password", PASSWORD])
         .assert()
         .failure()
-        .stderr(predicate::str::contains("Alias not found"));
+        .stderr(predicate::str::contains("No records found matching 'github'"));
 
     // collision Check: try to rename 'gh' to 'google' (exists)
     hermes(path)

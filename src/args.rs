@@ -58,6 +58,8 @@ pub enum Commands {
         alias: Option<String>,
         #[clap(short, long)]
         quiet: bool,
+        #[clap(short, long)]
+        exact: bool,
         #[arg(short = 'f', long, value_enum, default_value_t = OutputFormat::Table)]
         format: OutputFormat,
         #[clap(flatten)]

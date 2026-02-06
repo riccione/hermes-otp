@@ -85,8 +85,9 @@ Commands:
 * `update -a <ALIAS> -c <CODE> [OPTIONS]`: Update code by alias.
 * `rename <OLD ALIAS> <NEW ALIAS> [OPTIONS]`: Rename alias.
 * `ls [OPTIONS]`: Get all OTP codes.
-* `ls -a <ALIAS>`: Get OTP code by alias.
-* `ls -a <PARTIAL MATCH>`: Get OTP codes by partial match. 
+* `ls <ALIAS>`: Get OTP code by alias.
+* `ls <PARTIAL MATCH>`: Get OTP codes by partial match. 
+* `ls --exact <ALIAS>`: Get OTP codes by exact match. 
 * `config`: Show location of the codex file.
 * `migrate`: Migrate legacy codex format to JSON.
 
@@ -97,19 +98,20 @@ Flags:
 * `-p`, `--path`: Custom path to the codex file.
 * `-u`, `--unencrypt`: WARNING: Store the secret in plain text. Use for debugging only.
 * `--password`: WARNING: Using this flag leaves password in shell history.
-* `-q`, `--quiet`: Only for `ls -a <ALIAS>`. Do not display progress bar.
+* `-q`, `--quiet`: Only for `ls <ALIAS>`. Do not display progress bar.
+* `-e`, `--exact`: Only for `ls <ALIAS`. Exact match.
 * `-f [table, json]`, `--format [table, json]`: Only for `ls` command. Format output as table (default) or as JSON.
 
 ### Automatically copy OTP code to clipboard
 
 Wayland
-`hermes ls -a my_alias | wl-copy`
+`hermes ls my_alias | wl-copy`
 
 X11
-`hermes ls -a my_alias | xclip -selection clipboard`
+`hermes ls my_alias | xclip -selection clipboard`
 
 MacOS
-`hermes ls -a my_alias | pbcopy`
+`hermes ls my_alias | pbcopy`
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 

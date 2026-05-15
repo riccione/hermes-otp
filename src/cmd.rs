@@ -16,13 +16,15 @@ fn sanitize_and_validate_code(code: &str) -> Result<String, String> {
     Ok(clean)
 }
 
-fn get_effective_password(password: &Option<String>) -> String {
-    password
-        .clone()
-        .or_else(|| std::env::var("HERMES_PASSWORD").ok())
-        .unwrap_or_else(|| {
-            rpassword::prompt_password("Enter password: ").expect("Failed to read password")
-        })
+fn get_effective_password(password: &Option<String>) -> Result<String, String> {
+    if let Some(pwd) = password.as_deref() {
+        return Ok(pwd.to_string());
+    }
+    if let Ok(env_pwd) = std::env::var("HERMES_PASSWORD") {
+        return Ok(env_pwd);
+    }
+    rpassword::prompt_password("Enter password: ")
+        .map_err(|e| format!("TTY error: {e}"))
 }
 
 /* Validate code - check if it is a valid base32
@@ -76,7 +78,7 @@ pub fn add(
     let secret = if *is_unencrypt {
         clean_code.to_string()
     } else {
-        otp::encrypt(&clean_code.to_string(), &get_effective_password(password))
+        otp::encrypt(&clean_code.to_string(), &get_effective_password(password)?)
     };
 
     // serialize and save
@@ -117,11 +119,9 @@ pub fn update_code(
     }
 
     // Resolve password once (if needed)
-    let pass = if *is_unencrypt {
-        None
-    } else {
-        Some(get_effective_password(password))
-    };
+    let pass = (!*is_unencrypt)
+        .then(|| get_effective_password(password))
+        .transpose()?;
 
     // Do the swap
     remove(path, alias)?;
@@ -199,11 +199,10 @@ pub fn ls(
 
     let needs_password = !is_unencrypt && filtered.iter().any(|r| !r.is_unencrypted);
 
-    let pass = if needs_password {
-        get_effective_password(password)
-    } else {
-        String::new()
-    };
+    let pass = needs_password
+        .then(|| get_effective_password(password))
+        .transpose()?
+        .unwrap_or_default();
 
     let rem = otp::get_remaining_seconds();
     match format {

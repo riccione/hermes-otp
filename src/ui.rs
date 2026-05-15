@@ -32,8 +32,10 @@ impl<'a> Table<'a> {
         let flag_ref = flag.clone();
         let term_ref = output.clone();
         thread::spawn(move || {
-            term_ref.read_key().unwrap();
-            flag_ref.store(true, Ordering::Relaxed);
+            // If terminal is non-interactive, exit thread silently
+            if term_ref.read_key().is_ok() {
+                flag_ref.store(true, Ordering::Relaxed);
+            }
         });
 
         let mut rem = otp::get_remaining_seconds();

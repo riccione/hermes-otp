@@ -74,7 +74,7 @@ impl<'a> Drop for Table<'a> {
         // Safe exit (also works in case of panic)
         let term = Term::stdout();
         term.show_cursor().unwrap();
-        term.move_cursor_down(f64::INFINITY as usize).unwrap();
+        term.move_cursor_down(usize::MAX).unwrap();
         term.clear_last_lines(1).unwrap() // Clear "press any key to exit" line
     }
 }

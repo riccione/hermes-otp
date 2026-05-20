@@ -2,9 +2,9 @@ use crate::args::OutputFormat;
 use crate::file;
 use crate::models::Record;
 use crate::otp;
+use crate::ui::Table;
 use data_encoding::BASE32_NOPAD;
 use std::io;
-use crate::ui::Table;
 use std::path::{Path, PathBuf};
 
 fn sanitize_and_validate_code(code: &str) -> Result<String, String> {
@@ -16,12 +16,14 @@ fn sanitize_and_validate_code(code: &str) -> Result<String, String> {
     Ok(clean)
 }
 
-fn get_effective_password(password: &Option<String>) -> String {
+fn get_effective_password(password: &Option<String>) -> Result<String, String> {
     password
-        .clone()
+        .as_deref()
+        .map(String::from)
         .or_else(|| std::env::var("HERMES_PASSWORD").ok())
+        .map(Ok)
         .unwrap_or_else(|| {
-            rpassword::prompt_password("Enter password: ").expect("Failed to read password")
+            rpassword::prompt_password("Enter password: ").map_err(|e| format!("TTY error: {e}"))
         })
 }
 
@@ -76,7 +78,7 @@ pub fn add(
     let secret = if *is_unencrypt {
         clean_code.to_string()
     } else {
-        otp::encrypt(&clean_code.to_string(), &get_effective_password(password))
+        otp::encrypt(&clean_code.to_string(), &get_effective_password(password)?)
     };
 
     // serialize and save
@@ -117,11 +119,9 @@ pub fn update_code(
     }
 
     // Resolve password once (if needed)
-    let pass = if *is_unencrypt {
-        None
-    } else {
-        Some(get_effective_password(password))
-    };
+    let pass = (!*is_unencrypt)
+        .then(|| get_effective_password(password))
+        .transpose()?;
 
     // Do the swap
     remove(path, alias)?;
@@ -199,25 +199,22 @@ pub fn ls(
 
     let needs_password = !is_unencrypt && filtered.iter().any(|r| !r.is_unencrypted);
 
-    let pass = if needs_password {
-        get_effective_password(password)
-    } else {
-        String::new()
-    };
+    let pass = needs_password
+        .then(|| get_effective_password(password))
+        .transpose()?
+        .unwrap_or_default();
 
     let rem = otp::get_remaining_seconds();
     match format {
         OutputFormat::Json => print_json(&filtered, &pass, rem),
-        OutputFormat::Table =>
-            {
-                if quiet  {
-                    print_table(&filtered, &pass, rem, alias_filter.is_some(), quiet);
-                }
-                else {
-                    let table = Table::new(&filtered, &pass, alias_filter.is_some());
-                    table.render();
-                }
+        OutputFormat::Table => {
+            if quiet {
+                print_table(&filtered, &pass, rem, alias_filter.is_some(), quiet);
+            } else {
+                let table = Table::new(&filtered, &pass, alias_filter.is_some());
+                table.render();
             }
+        }
     }
 
     Ok(())
@@ -235,13 +232,7 @@ fn get_otp_display(record: &Record, pass: &str) -> String {
         .unwrap_or_else(|_| "Error Invalid secret or decryption failed".to_string())
 }
 
-pub fn print_table(
-    records: &[&Record],
-    pass: &str,
-    rem: u64,
-    is_single_alias: bool,
-    quiet: bool
-) {
+pub fn print_table(records: &[&Record], pass: &str, rem: u64, is_single_alias: bool, quiet: bool) {
     let mut bar = String::from("");
     if !quiet {
         let bar_width = 20;
@@ -262,7 +253,13 @@ pub fn print_table(
         println!("{:-<15}-|-{:-<10}-|-{:-<4}", "", "", "");
         for r in records {
             let otp = get_otp_display(r, pass);
-            println!("{0: <15} | {1: <10} | {2: <3} {3}", r.alias, otp, rem.to_string() + "s", bar);
+            println!(
+                "{0: <15} | {1: <10} | {2: <3} {3}",
+                r.alias,
+                otp,
+                rem.to_string() + "s",
+                bar
+            );
         }
     }
 }

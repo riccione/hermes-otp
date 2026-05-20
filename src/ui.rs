@@ -1,17 +1,17 @@
-use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::thread;
-use std::thread::sleep;
-use std::time::Duration;
-use console::{Term};
 use crate::cmd::print_table;
 use crate::models::Record;
 use crate::otp;
+use console::Term;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
+use std::thread;
+use std::thread::sleep;
+use std::time::Duration;
 
 pub(crate) struct Table<'a> {
-    filtered: &'a[&'a Record],
+    filtered: &'a [&'a Record],
     pass: &'a String,
-    is_single_alias: bool
+    is_single_alias: bool,
 }
 
 impl<'a> Table<'a> {
@@ -19,7 +19,7 @@ impl<'a> Table<'a> {
         Table {
             filtered,
             pass,
-            is_single_alias
+            is_single_alias,
         }
     }
     pub fn render(&self) {
@@ -56,7 +56,8 @@ impl<'a> Table<'a> {
 }
 
 impl<'a> Drop for Table<'a> {
-    fn drop(&mut self) { // Safe exit (also works in case of panic)
+    fn drop(&mut self) {
+        // Safe exit (also works in case of panic)
         let term = Term::stdout();
         term.show_cursor().unwrap();
         term.move_cursor_down(f64::INFINITY as usize).unwrap();

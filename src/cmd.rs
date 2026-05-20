@@ -2,9 +2,9 @@ use crate::args::OutputFormat;
 use crate::file;
 use crate::models::Record;
 use crate::otp;
+use crate::ui::Table;
 use data_encoding::BASE32_NOPAD;
 use std::io;
-use crate::ui::Table;
 use std::path::{Path, PathBuf};
 
 fn sanitize_and_validate_code(code: &str) -> Result<String, String> {
@@ -23,8 +23,7 @@ fn get_effective_password(password: &Option<String>) -> Result<String, String> {
     if let Ok(env_pwd) = std::env::var("HERMES_PASSWORD") {
         return Ok(env_pwd);
     }
-    rpassword::prompt_password("Enter password: ")
-        .map_err(|e| format!("TTY error: {e}"))
+    rpassword::prompt_password("Enter password: ").map_err(|e| format!("TTY error: {e}"))
 }
 
 /* Validate code - check if it is a valid base32
@@ -207,16 +206,14 @@ pub fn ls(
     let rem = otp::get_remaining_seconds();
     match format {
         OutputFormat::Json => print_json(&filtered, &pass, rem),
-        OutputFormat::Table =>
-            {
-                if quiet  {
-                    print_table(&filtered, &pass, rem, alias_filter.is_some(), quiet);
-                }
-                else {
-                    let table = Table::new(&filtered, &pass, alias_filter.is_some());
-                    table.render();
-                }
+        OutputFormat::Table => {
+            if quiet {
+                print_table(&filtered, &pass, rem, alias_filter.is_some(), quiet);
+            } else {
+                let table = Table::new(&filtered, &pass, alias_filter.is_some());
+                table.render();
             }
+        }
     }
 
     Ok(())
@@ -234,13 +231,7 @@ fn get_otp_display(record: &Record, pass: &str) -> String {
         .unwrap_or_else(|_| "Error Invalid secret or decryption failed".to_string())
 }
 
-pub fn print_table(
-    records: &[&Record],
-    pass: &str,
-    rem: u64,
-    is_single_alias: bool,
-    quiet: bool
-) {
+pub fn print_table(records: &[&Record], pass: &str, rem: u64, is_single_alias: bool, quiet: bool) {
     let mut bar = String::from("");
     if !quiet {
         let bar_width = 20;
@@ -261,7 +252,13 @@ pub fn print_table(
         println!("{:-<15}-|-{:-<10}-|-{:-<4}", "", "", "");
         for r in records {
             let otp = get_otp_display(r, pass);
-            println!("{0: <15} | {1: <10} | {2: <3} {3}", r.alias, otp, rem.to_string() + "s", bar);
+            println!(
+                "{0: <15} | {1: <10} | {2: <3} {3}",
+                r.alias,
+                otp,
+                rem.to_string() + "s",
+                bar
+            );
         }
     }
 }

@@ -17,13 +17,14 @@ fn sanitize_and_validate_code(code: &str) -> Result<String, String> {
 }
 
 fn get_effective_password(password: &Option<String>) -> Result<String, String> {
-    if let Some(pwd) = password.as_deref() {
-        return Ok(pwd.to_string());
-    }
-    if let Ok(env_pwd) = std::env::var("HERMES_PASSWORD") {
-        return Ok(env_pwd);
-    }
-    rpassword::prompt_password("Enter password: ").map_err(|e| format!("TTY error: {e}"))
+    password
+        .as_deref()
+        .map(String::from)
+        .or_else(|| std::env::var("HERMES_PASSWORD").ok())
+        .map(Ok)
+        .unwrap_or_else(|| {
+            rpassword::prompt_password("Enter password: ").map_err(|e| format!("TTY error: {e}"))
+        })
 }
 
 /* Validate code - check if it is a valid base32

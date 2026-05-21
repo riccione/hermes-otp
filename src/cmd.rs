@@ -145,8 +145,9 @@ pub fn remove(path: &Path, alias: &str) -> Result<(), String> {
     // Convert the Records back to JSON
     let lines: Vec<String> = filtered_records
         .iter()
-        .map(|r| serde_json::to_string(r).unwrap_or_default())
-        .collect();
+        .map(serde_json::to_string)
+        .collect::<Result<Vec<String>, serde_json::Error>>()
+        .map_err(|e| format!("Serialization error: {e}"))?;
 
     let data = lines.join("\n") + "\n";
 
@@ -292,8 +293,9 @@ pub fn migrate(path: &PathBuf) -> io::Result<()> {
     // Serialize to JSON format
     let migrated_records: Vec<String> = records
         .iter()
-        .map(|record| serde_json::to_string(record).expect("Failed to serialize"))
-        .collect();
+        .map(serde_json::to_string)
+        .collect::<Result<Vec<String>, serde_json::Error>>()
+        .map_err(|e| io::Error::other(e))?;
 
     let count = migrated_records.len();
     let new_content = migrated_records.join("\n") + "\n";
@@ -335,8 +337,9 @@ pub fn rename(path: &PathBuf, old_alias: &str, new_alias: &str) -> Result<(), St
 
     let lines: Vec<String> = records
         .iter()
-        .map(|r| serde_json::to_string(r).expect("Failed to serialize"))
-        .collect();
+        .map(serde_json::to_string)
+        .collect::<Result<Vec<String>, serde_json::Error>>()
+        .map_err(|e| format!("Serialization error: {e}"))?;
 
     let data = lines.join("\n") + "\n";
 

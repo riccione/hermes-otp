@@ -2,10 +2,8 @@ use crate::cmd::print_table;
 use crate::models::Record;
 use crate::otp;
 use console::Term;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
+use std::sync::mpsc;
 use std::thread;
-use std::thread::sleep;
 use std::time::Duration;
 
 pub(crate) struct Table<'a> {
@@ -25,34 +23,48 @@ impl<'a> Table<'a> {
     pub fn render(&self) {
         let output = Term::stdout();
         let err = Term::stderr();
-        output.hide_cursor().unwrap();
+        let _ = output.hide_cursor();
 
-        let flag = Arc::new(AtomicBool::new(false));
-
-        let flag_ref = flag.clone();
+        let (tx, rx) = mpsc::channel();
         let term_ref = output.clone();
+
         thread::spawn(move || {
-            // If terminal is non-interactive, exit thread silently
             if term_ref.read_key().is_ok() {
-                flag_ref.store(true, Ordering::Relaxed);
+                let _ = tx.send(());
             }
         });
 
         let mut rem = otp::get_remaining_seconds();
         print_table(self.filtered, self.pass, rem, self.is_single_alias, false);
         eprintln!("Press any key to exit");
-        err.move_cursor_up(1).unwrap();
+        let _ = err.move_cursor_up(1);
 
-        while flag.load(Ordering::Relaxed) == false {
-            rem = otp::get_remaining_seconds();
-            if self.is_single_alias & (self.filtered.len() == 1) {
-                output.move_cursor_up(1).unwrap();
-                err.move_cursor_up(1).unwrap();
-            } else {
-                output.move_cursor_up(self.filtered.len() + 2).unwrap(); // One line per record plus 2 lines for table headers
+        loop {
+            match rx.recv_timeout(Duration::from_millis(100)) {
+                // A key was pressed! Exit immediately.
+                Ok(_) => break,
+
+                // The background thread died/disconnected (e.g., non-interactive terminal).
+                // Exit silently instead of looping forever.
+                Err(mpsc::RecvTimeoutError::Disconnected) => break,
+
+                // Just a normal 100ms timeout. Update the timer and redraw.
+                Err(mpsc::RecvTimeoutError::Timeout) => {}
             }
-            print_table(self.filtered, self.pass, rem, self.is_single_alias, false);
-            sleep(Duration::from_millis(100));
+
+            let new_rem = otp::get_remaining_seconds();
+
+            if new_rem != rem {
+                rem = new_rem;
+
+                if self.is_single_alias && self.filtered.len() == 1 {
+                    let _ = output.move_cursor_up(1);
+                    let _ = err.move_cursor_up(1);
+                } else {
+                    let _ = output.move_cursor_up(self.filtered.len() + 2);
+                }
+                print_table(self.filtered, self.pass, rem, self.is_single_alias, false);
+            }
         }
     }
 }

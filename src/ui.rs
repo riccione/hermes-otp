@@ -1,8 +1,8 @@
-use std::sync::mpsc;
 use crate::cmd::print_table;
 use crate::models::Record;
 use crate::otp;
 use console::Term;
+use std::sync::mpsc;
 use std::thread;
 use std::time::Duration;
 
@@ -40,8 +40,16 @@ impl<'a> Table<'a> {
         let _ = err.move_cursor_up(1);
 
         loop {
-            if rx.recv_timeout(Duration::from_millis(100)).is_ok() {
-                break;
+            match rx.recv_timeout(Duration::from_millis(100)) {
+                // A key was pressed! Exit immediately.
+                Ok(_) => break,
+
+                // The background thread died/disconnected (e.g., non-interactive terminal).
+                // Exit silently instead of looping forever.
+                Err(mpsc::RecvTimeoutError::Disconnected) => break,
+
+                // Just a normal 100ms timeout. Update the timer and redraw.
+                Err(mpsc::RecvTimeoutError::Timeout) => {}
             }
 
             let new_rem = otp::get_remaining_seconds();

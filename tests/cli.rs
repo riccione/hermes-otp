@@ -56,13 +56,13 @@ fn add_remove_isolated_flow() -> Result<(), Box<dyn std::error::Error>> {
 
     hermes(path)
         .arg("add")
-        .args(&[ALIAS, "-c", CODE, "--password", PASSWORD])
+        .args([ALIAS, "-c", CODE, "--password", PASSWORD])
         .assert()
         .success();
 
     hermes(path)
         .arg("remove")
-        .args(&[ALIAS])
+        .args([ALIAS])
         .assert()
         .success()
         .stdout(predicate::str::contains(format!(
@@ -82,21 +82,21 @@ fn add_update_remove_isolated_flow() -> Result<(), Box<dyn std::error::Error>> {
 
     hermes(path)
         .arg("add")
-        .args(&[alias, "-c", CODE, "--password", PASSWORD])
+        .args([alias, "-c", CODE, "--password", PASSWORD])
         .assert()
         .success()
         .stdout(predicate::str::is_match("[0-9]{6}")?);
 
     hermes(path)
         .arg("update")
-        .args(&[alias, "-c", CODE, "--password", PASSWORD])
+        .args([alias, "-c", CODE, "--password", PASSWORD])
         .assert()
         .success()
         .stdout(predicate::str::contains(&stdout_removed));
 
     hermes(path)
         .arg("remove")
-        .args(&[alias])
+        .args([alias])
         .assert()
         .success()
         .stdout(predicate::str::contains(stdout_removed));
@@ -112,20 +112,20 @@ fn rename_alias_isolated_flow() -> Result<(), Box<dyn std::error::Error>> {
     // add two initial records
     hermes(path)
         .arg("add")
-        .args(&["github", "-c", CODE, "--password", PASSWORD])
+        .args(["github", "-c", CODE, "--password", PASSWORD])
         .assert()
         .success();
 
     hermes(path)
         .arg("add")
-        .args(&["google", "-c", CODE, "--password", PASSWORD])
+        .args(["google", "-c", CODE, "--password", PASSWORD])
         .assert()
         .success();
 
     // rename: github -> gh
     hermes(path)
         .arg("rename")
-        .args(&["github", "gh"])
+        .args(["github", "gh"])
         .assert()
         .success()
         .stdout(predicate::str::contains("Successfully renamed"));
@@ -133,8 +133,8 @@ fn rename_alias_isolated_flow() -> Result<(), Box<dyn std::error::Error>> {
     // verify: new alias exists, old alias is gone
     hermes(path)
         .arg("ls")
-        .args(&["gh"])
-        .args(&["--password", PASSWORD])
+        .args(["gh"])
+        .args(["--password", PASSWORD])
         .arg("-q")
         .assert()
         .success()
@@ -142,8 +142,8 @@ fn rename_alias_isolated_flow() -> Result<(), Box<dyn std::error::Error>> {
 
     hermes(path)
         .arg("ls")
-        .args(&["github"])
-        .args(&["--password", PASSWORD])
+        .args(["github"])
+        .args(["--password", PASSWORD])
         .assert()
         .failure()
         .stderr(predicate::str::contains(
@@ -153,7 +153,7 @@ fn rename_alias_isolated_flow() -> Result<(), Box<dyn std::error::Error>> {
     // collision Check: try to rename 'gh' to 'google' (exists)
     hermes(path)
         .arg("rename")
-        .args(&["gh", "google"])
+        .args(["gh", "google"])
         .assert()
         .failure()
         .stderr(predicate::str::contains("already exists"));
@@ -169,27 +169,27 @@ fn ls_partial_search_isolated() -> Result<(), Box<dyn std::error::Error>> {
     // add multiple records with similar prefixes
     hermes(path)
         .arg("add")
-        .args(&["google", "-c", CODE, "--password", PASSWORD])
+        .args(["google", "-c", CODE, "--password", PASSWORD])
         .assert()
         .success();
 
     hermes(path)
         .arg("add")
-        .args(&["goodreads", "-c", CODE, "--password", PASSWORD])
+        .args(["goodreads", "-c", CODE, "--password", PASSWORD])
         .assert()
         .success();
 
     hermes(path)
         .arg("add")
-        .args(&["github", "-c", CODE, "--password", PASSWORD])
+        .args(["github", "-c", CODE, "--password", PASSWORD])
         .assert()
         .success();
 
     // test partial search: "goo" should return google and goodreads only
     hermes(path)
         .arg("ls")
-        .args(&["goo"])
-        .args(&["--password", PASSWORD])
+        .args(["goo"])
+        .args(["--password", PASSWORD])
         .assert()
         .success()
         .stdout(predicate::str::contains("google"))
@@ -199,8 +199,8 @@ fn ls_partial_search_isolated() -> Result<(), Box<dyn std::error::Error>> {
     // test non-matching search
     hermes(path)
         .arg("ls")
-        .args(&["no_match"])
-        .args(&["--password", PASSWORD])
+        .args(["no_match"])
+        .args(["--password", PASSWORD])
         .assert()
         .failure();
 
@@ -217,7 +217,7 @@ fn ls_json_format_isolated() -> Result<(), Box<dyn std::error::Error>> {
     for (alias, code) in &entries {
         hermes(path)
             .arg("add")
-            .args(&[alias, "-c", code, "--password", PASSWORD])
+            .args([alias, "-c", code, "--password", PASSWORD])
             .assert()
             .success();
     }
@@ -225,8 +225,8 @@ fn ls_json_format_isolated() -> Result<(), Box<dyn std::error::Error>> {
     // ls with JSON format
     let output = hermes(path)
         .arg("ls")
-        .args(&["--password", PASSWORD])
-        .args(&["--format", "json"])
+        .args(["--password", PASSWORD])
+        .args(["--format", "json"])
         .output()?;
 
     // parse the actual JSON
@@ -321,7 +321,7 @@ fn test_ls_handles_mashed_json_records() -> Result<(), Box<dyn std::error::Error
 
     let assert = hermes(path)
         .arg("ls")
-        .args(&["--password", PASSWORD])
+        .args(["--password", PASSWORD])
         .assert();
 
     assert

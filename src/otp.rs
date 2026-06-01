@@ -20,7 +20,7 @@ fn get_current_timestamp() -> Result<u64, OtpError> {
 pub fn get_remaining_seconds() -> u64 {
     let now = get_current_timestamp().unwrap_or(0);
     // DEFAULT_STEP == 30s
-    DEFAULT_STEP as u64 - (now % DEFAULT_STEP as u64)
+    DEFAULT_STEP - (now % DEFAULT_STEP)
 }
 
 /*

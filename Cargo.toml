@@ -1,7 +1,7 @@
 [package]
 name = "hermes"
 version = "0.6.0"
-edition = "2021"
+edition = "2024"
 description = "Hermes: CLI OTP manager app"
 homepage = "https://github.com/riccione/hermes"
 documentation = "https://github.com/riccione/hermes"

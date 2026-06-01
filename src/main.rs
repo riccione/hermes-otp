@@ -27,7 +27,7 @@ fn resolve_codex_path(cli: &Cli) -> PathBuf {
     cli.path
         .clone()
         .or_else(|| std::env::var("HERMES_PATH").ok().map(PathBuf::from))
-        .unwrap_or_else(|| file::get_default_path())
+        .unwrap_or_else(file::get_default_path)
 }
 
 fn run(command: Commands, codex_path: PathBuf) -> Result<(), String> {

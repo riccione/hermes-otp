@@ -1,5 +1,4 @@
 use crate::models::Record;
-use dirs;
 use serde_json::Deserializer;
 use std::fs::OpenOptions;
 use std::io::{self, Write};
@@ -111,7 +110,7 @@ pub fn read_legacy_raw(path: &Path) -> Result<Vec<Record>, String> {
 
     let records: Vec<Record> = content
         .lines()
-        .filter_map(|line| Record::from_legacy_line(line))
+        .filter_map(Record::from_legacy_line)
         .collect();
 
     if records.is_empty() && !content.trim().is_empty() {

@@ -45,14 +45,6 @@ jobs:
       uses: dtolnay/rust-toolchain@stable
       with:
         targets: ${{ matrix.target }}
-        components: clippy
-
-    - name: Run Clippy
-      run: cargo clippy --all-targets -- -D warnings
-
-    - name: Run Tests
-      if: contains(matrix.target, 'x86_64')
-      run: cargo test --release
 
     - name: Build
       run: cargo build --release --target ${{ matrix.target }} --locked

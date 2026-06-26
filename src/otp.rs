@@ -1,7 +1,7 @@
 use data_encoding::BASE32_NOPAD;
-use magic_crypt::{new_magic_crypt, MagicCryptTrait};
+use magic_crypt::{MagicCryptTrait, new_magic_crypt};
 use std::time::{SystemTime, UNIX_EPOCH};
-use totp_lite::{totp_custom, Sha1, DEFAULT_STEP};
+use totp_lite::{DEFAULT_STEP, Sha1, totp_custom};
 
 pub enum OtpError {
     DecryptionFailed,

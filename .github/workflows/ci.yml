@@ -1,3 +1,4 @@
+---
 name: CI
 
 on:
@@ -14,45 +15,6 @@ on:
       - 'LICENSE*'
       - '.gitignore'
 
-env:
-  CARGO_TERM_COLOR: always
-
 jobs:
-  check:
-    name: Check
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
-      - run: cargo check
-
-  fmt:
-    name: Formatting
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: rustfmt
-      - run: cargo fmt --all -- --check
-
-  clippy:
-    name: Clippy
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: clippy
-      - uses: Swatinem/rust-cache@v2
-      - run: cargo clippy --all-targets -- -D warnings
-
-  test:
-    name: Test
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
-      - run: cargo test
+  ci:
+    uses: riccione/github-workflows/.github/workflows/rust-ci.yml@24ba5409c1eeac121965cedc2fb507b0387f25af

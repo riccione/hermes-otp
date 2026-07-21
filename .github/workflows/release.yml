@@ -13,3 +13,8 @@ permissions:
 jobs:
   release:
     uses: riccione/github-workflows/.github/workflows/rust-release.yml@24ba5409c1eeac121965cedc2fb507b0387f25af
+    permissions:
+      contents: write
+    with:
+      bin_name: hermes
+      tag: ${{ github.ref_name }}

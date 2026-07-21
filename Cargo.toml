@@ -9,6 +9,14 @@ repository = "https://github.com/riccione/hermes"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
+[workspace.metadata.release]
+# Custom prefix for your Git tags (default is empty or the version number)
+tag-prefix = ""
+# Automatically push to your remote repository after committing and tagging
+push = false
+# Skip publishing to crates.io (useful for private binaries/libraries)
+publish = false
+
 [profile.release]
 strip = true
 lto = true

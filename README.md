@@ -1,15 +1,14 @@
 <a name="readme-top"></a>
 
 <!-- PROJECT SHIELDS -->
-<!--
-*** I'm using markdown "reference style" links for readability.
-*** Reference links are enclosed in brackets [ ] instead of parentheses ( ).
-*** See the bottom of this document for the declaration of the reference variables
-*** for contributors-url, forks-url, etc. This is an optional, concise syntax you may use.
-*** https://www.markdownguide.org/basic-syntax/#reference-style-links
--->
 <div align="center">
-  <h3 align="center">Hermes: CLI OTP app</h3>
+
+[![CI](https://github.com/riccione/hermes/actions/workflows/ci.yml/badge.svg)](https://github.com/riccione/hermes/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
+</div>
+<div align="center">
+  <h3 align="center">Hermes: CLI OTP manager</h3>
 </div>
 
 <!-- TABLE OF CONTENTS -->
@@ -29,7 +28,12 @@
         <li><a href="#installation">Installation</a></li>
       </ul>
     </li>
-    <li><a href="#usage">Usage</a></li>
+    <li><a href="#usage">Usage</a>
+      <ul>
+        <li><a href="#pipeline-integration">Pipeline Integration</a></li>
+        <li><a href="#automatically-copy-otp-code-to-clipboard">Clipboard</a></li>
+      </ul>
+    </li>
     <li><a href="#testing">Testing</a></li>
     <li><a href="#contributing">Contributing</a></li>
     <li><a href="#license">License</a></li>
@@ -41,14 +45,18 @@
 <!-- ABOUT THE PROJECT -->
 ## About The Project
 
-Simple cli OTP app written in Rust.
+A CLI OTP manager designed for pipelines and automation. Generates TOTP codes programmatically with JSON output, environment variable support, and non-interactive mode.
 
-Build with:
+Built with:
 - [Clap](https://crates.io/crates/clap)
 - [Magic-crypt](https://crates.io/crates/magic-crypt)
 - [Data-encoding](https://crates.io/crates/data-encoding)
 - [Totp-lite](https://crates.io/crates/totp-lite)
 - [console](https://crates.io/crates/console)
+- [dirs](https://crates.io/crates/dirs)
+- [rpassword](https://crates.io/crates/rpassword)
+- [serde](https://crates.io/crates/serde)
+- [serde_json](https://crates.io/crates/serde_json)
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 
@@ -57,7 +65,7 @@ Build with:
 
 ### Prerequisites
 
-* RUST 1.85+
+* Rust 1.85+
 
 ### Installation
 
@@ -102,16 +110,44 @@ Flags:
 * `-e`, `--exact`: Only for `ls <ALIAS`. Exact match.
 * `-f [table, json]`, `--format [table, json]`: Only for `ls` command. Format output as table (default) or as JSON.
 
+### Pipeline Integration
+
+Hermes is designed for scripting and automation. Use `--format json` for machine-readable output and `-q` to suppress interactive prompts.
+
+**Generate OTP in a script:**
+```sh
+OTP=$(hermes ls my_alias -q --format json | jq -r '.otp')
+curl -X POST https://api.example.com/auth -d "otp=$OTP"
+```
+
+**Use with environment variables:**
+```sh
+export HERMES_PASSWORD="mysecret"
+export HERMES_PATH="/secure/codex.json"
+hermes ls my_alias -q
+```
+
+**Non-interactive mode (no progress bar):**
+```sh
+hermes ls my_alias -q | grep -oE '[0-9]{6}'
+```
+
 ### Automatically copy OTP code to clipboard
 
-Wayland
-`hermes ls my_alias | wl-copy`
+**Wayland**
+```sh
+hermes ls my_alias | wl-copy
+```
 
-X11
-`hermes ls my_alias | xclip -selection clipboard`
+**X11**
+```sh
+hermes ls my_alias | xclip -selection clipboard
+```
 
-MacOS
-`hermes ls my_alias | pbcopy`
+**macOS**
+```sh
+hermes ls my_alias | pbcopy
+```
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 
@@ -143,7 +179,7 @@ create a pull request. You can also simply open an issue with the tag
 <!-- LICENSE -->
 ## License
 
-Distributed under the MIT License. See `LICENSE.txt` for more information.
+Distributed under the MIT License. See `LICENSE` for more information.
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 
@@ -152,8 +188,7 @@ Distributed under the MIT License. See `LICENSE.txt` for more information.
 
 Just create an issue if you need something.
 
-Project Link:
-[https://github.com/riccionee/hermes](https://github.com/riccione/hermes)
+Project Link: [https://github.com/riccione/hermes](https://github.com/riccione/hermes)
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 

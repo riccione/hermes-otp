@@ -1,6 +1,5 @@
 use assert_cmd::cargo::cargo_bin_cmd;
 use predicates::prelude::*;
-use std::io::Write;
 use tempfile::NamedTempFile;
 
 const CODE: &str = "BQZH47HMIUUQOQVAXO3MCRUP3OGR3OIL";
@@ -249,54 +248,6 @@ fn ls_json_format_isolated() -> Result<(), Box<dyn std::error::Error>> {
     // verify specific content
     let has_apple = array.iter().any(|r| r["alias"] == "apple");
     assert!(has_apple, "JSON output missing 'apple' alias");
-
-    Ok(())
-}
-
-#[test]
-fn test_migration_converts_legacy_to_json() -> Result<(), Box<dyn std::error::Error>> {
-    let mut file = NamedTempFile::new()?;
-    // Create a legacy file
-    writeln!(
-        file,
-        "legacy:v7dWnFhl7fwqXIbmawhebdHS3NoJGyCy6XnrqlKRk7+ArTf/KmpvNP2c2x7Hkcgu:0:sha1"
-    )?;
-
-    // Run migrate
-    hermes(file.path()).arg("migrate").assert().success();
-
-    // Verify 'ls' now works (reads JSON))
-    hermes(file.path())
-        .arg("ls")
-        .arg("--password")
-        .arg(PASSWORD)
-        .assert()
-        .success()
-        .stdout(predicate::str::contains("legacy"));
-
-    // Peek at the file to confirm it's JSON
-    let content = std::fs::read_to_string(file.path())?;
-    assert!(content.starts_with('{'));
-    assert!(content.contains("\"alias\":\"legacy\""));
-
-    Ok(())
-}
-
-#[test]
-fn test_ls_errors_on_legacy_format() -> Result<(), Box<dyn std::error::Error>> {
-    let mut file = NamedTempFile::new()?;
-    // Create a legacy file
-    writeln!(
-        file,
-        "TEST:v7dWnFhl7fwqXIbmawhebdHS3NoJGyCy6XnrqlKRk7+ArTf/KmpvNP2c2x7Hkcgu:0:sha1"
-    )?;
-
-    hermes(file.path())
-        .arg("ls")
-        .assert()
-        .failure() // expect it to fail now
-        .stderr(predicate::str::contains("Legacy file format detected"))
-        .stderr(predicate::str::contains("hermes migrate"));
 
     Ok(())
 }

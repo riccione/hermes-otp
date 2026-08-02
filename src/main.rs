@@ -37,10 +37,6 @@ fn run(command: Commands, codex_path: PathBuf) -> Result<(), String> {
             code,
             encryption,
         } => {
-            if alias.contains(":") {
-                return Err("Error: Don't use ':' in alias.".to_string());
-            }
-
             cmd::add(
                 &codex_path,
                 &alias,
@@ -98,10 +94,6 @@ fn run(command: Commands, codex_path: PathBuf) -> Result<(), String> {
                 .exists()
                 .then(|| println!("{}", codex_path.display()))
                 .ok_or_else(|| format!("Codex file does not exists at {}", codex_path.display()))?;
-        }
-
-        Commands::Migrate => {
-            cmd::migrate(&codex_path).map_err(|e| format!("Migration failed: {e}"))?;
         }
     }
     Ok(())

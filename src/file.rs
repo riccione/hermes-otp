@@ -3,7 +3,6 @@ use serde_json::Deserializer;
 use std::fs::OpenOptions;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
-use std::time::{SystemTime, UNIX_EPOCH};
 
 const FILE_CODEX: &str = "codex";
 const PROJECT: &str = "hermes";
@@ -26,15 +25,13 @@ pub fn file_exists(path: &Path) -> bool {
 pub fn read_codex(path: &Path) -> Result<Vec<Record>, String> {
     let content = std::fs::read_to_string(path).map_err(|_| "Codex not found.")?;
 
-    if content.is_empty() {
-        return Ok(Vec::new());
+    // detect non-JSON format early
+    if !content.trim_start().starts_with('{') && !content.trim().is_empty() {
+        return Err("Invalid codex format: expected JSON.".to_string());
     }
 
-    // detect Legacy format
-    if !content.trim_start().starts_with('{') && content.contains(':') {
-        return Err("Legacy file format detected! \n\
-             Please run 'hermes migrate' to upgrade your codex to the new JSON format."
-            .to_string());
+    if content.is_empty() {
+        return Ok(Vec::new());
     }
 
     // JSON parsing
@@ -92,30 +89,4 @@ fn perform_backup(path: &Path, extension: &str) -> io::Result<PathBuf> {
 // routine backups for add and remove cmd
 pub fn create_routine_backup(path: &Path) -> io::Result<PathBuf> {
     perform_backup(path, "bak")
-}
-
-// backup for migration with UNIX timestamp
-pub fn create_snapshot_backup(path: &Path) -> io::Result<PathBuf> {
-    let timestamp = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .expect("Time went backwards")
-        .as_secs();
-
-    perform_backup(path, &format!("{}.bak", timestamp))
-}
-
-pub fn read_legacy_raw(path: &Path) -> Result<Vec<Record>, String> {
-    let content =
-        std::fs::read_to_string(path).map_err(|e| format!("Could not read codex: {}", e))?;
-
-    let records: Vec<Record> = content
-        .lines()
-        .filter_map(Record::from_legacy_line)
-        .collect();
-
-    if records.is_empty() && !content.trim().is_empty() {
-        return Err("No legacy records found to migrate, or file is already JSON.".to_string());
-    }
-
-    Ok(records)
 }

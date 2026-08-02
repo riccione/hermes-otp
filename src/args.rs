@@ -67,6 +67,4 @@ pub enum Commands {
     },
     /// Show location of codex file
     Config {},
-    /// Migrate legacy codex format to JSON
-    Migrate,
 }

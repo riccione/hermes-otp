@@ -4,7 +4,6 @@ use crate::models::Record;
 use crate::otp;
 use crate::ui::Table;
 use data_encoding::BASE32_NOPAD;
-use std::io;
 use std::path::Path;
 
 fn sanitize_and_validate_code(code: &str) -> Result<String, String> {
@@ -64,11 +63,6 @@ pub fn add(
     password: &Option<String>,
 ) -> Result<(), String> {
     let clean_code = sanitize_and_validate_code(code)?;
-
-    // for Legacy file format
-    if alias.contains(':') {
-        return Err("Error: Alias cannot contain ':'".into());
-    }
 
     if file::file_exists(path) && file::alias_exists(alias, path) {
         return Err(format!("Error: Alias '{alias}' already exists."));
@@ -281,37 +275,7 @@ fn print_json(records: &[&Record], pass: &str, rem: u64) {
     println!("{}", serde_json::to_string_pretty(&list).unwrap());
 }
 
-pub fn migrate(path: &Path) -> io::Result<()> {
-    // create backup
-    let backup_path = file::create_snapshot_backup(path)?;
-    println!("Backup created at {:?}", backup_path);
-
-    // read and parse everything using the hybrid parser
-    let records = file::read_legacy_raw(path).map_err(io::Error::other)?;
-
-    // Serialize to JSON format
-    let migrated_records: Vec<String> = records
-        .iter()
-        .map(serde_json::to_string)
-        .collect::<Result<Vec<String>, serde_json::Error>>()
-        .map_err(io::Error::other)?;
-
-    let count = migrated_records.len();
-    let new_content = migrated_records.join("\n") + "\n";
-
-    file::overwrite_file(path, &new_content)?;
-
-    println!("Successfully migrated {count} records to JSON format.");
-
-    Ok(())
-}
-
 pub fn rename(path: &Path, old_alias: &str, new_alias: &str) -> Result<(), String> {
-    // for Legacy file format
-    if new_alias.contains(':') {
-        return Err("The new alias cannot contain ':'".to_string());
-    }
-
     if file::alias_exists(new_alias, path) {
         return Err(format!("Alias '{new_alias}' already exists."));
     }

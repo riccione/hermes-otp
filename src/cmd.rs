@@ -2,6 +2,7 @@ use crate::args::OutputFormat;
 use crate::file;
 use crate::models::Record;
 use crate::otp;
+use crate::otpauth::OtpAuth;
 use crate::ui::Table;
 use data_encoding::BASE32_NOPAD;
 use std::path::Path;
@@ -309,5 +310,118 @@ pub fn rename(path: &Path, old_alias: &str, new_alias: &str) -> Result<(), Strin
     file::overwrite_file(path, &data).map_err(|e| format!("Error saving changes: {e}"))?;
 
     println!("Successfully renamed '{}' to '{}'", old_alias, new_alias);
+    Ok(())
+}
+
+pub fn add_from_otpauth(
+    path: &Path,
+    uri: &str,
+    is_unencrypt: &bool,
+    password: &Option<String>,
+) -> Result<(), String> {
+    let parsed = OtpAuth::parse(uri)?;
+    let alias = parsed.alias.clone();
+
+    if file::file_exists(path) && file::alias_exists(&alias, path) {
+        return Err(format!("Error: Alias '{alias}' already exists."));
+    }
+
+    let secret = if *is_unencrypt {
+        parsed.secret.clone()
+    } else {
+        otp::encrypt(&parsed.secret, &get_effective_password(password)?)
+    };
+
+    let record = Record {
+        alias: alias.clone(),
+        secret,
+        is_unencrypted: *is_unencrypt,
+        algorithm: parsed.algorithm,
+        digits: parsed.digits,
+        period: parsed.period,
+        created_at: parsed.created_at,
+    };
+
+    let json_data = serde_json::to_string(&record).map_err(|e| e.to_string())?;
+    file::ensure_dir_exists(path).map_err(|e| e.to_string())?;
+
+    if file::file_exists(path) {
+        file::create_routine_backup(path).map_err(|e| format!("Warning: Backup failed: {}", e))?;
+        file::append_to_file(path, &json_data).map_err(|e| e.to_string())?;
+    } else {
+        file::overwrite_file(path, &json_data).map_err(|e| e.to_string())?;
+    }
+
+    println!("Record saved: {alias}");
+    Ok(())
+}
+
+pub fn add_batch(
+    path: &Path,
+    file_path: &str,
+    is_unencrypt: &bool,
+    password: &Option<String>,
+) -> Result<(), String> {
+    let parsed_records = OtpAuth::parse_batch(file_path)?;
+    let count = parsed_records.len();
+
+    file::ensure_dir_exists(path).map_err(|e| e.to_string())?;
+
+    let mut current_records = if file::file_exists(path) {
+        file::read_codex(path)?
+    } else {
+        Vec::new()
+    };
+
+    for parsed in &parsed_records {
+        if current_records.iter().any(|r| r.alias == parsed.alias) {
+            return Err(format!(
+                "Error: Alias '{}' already exists. Aborting batch.",
+                parsed.alias
+            ));
+        }
+    }
+
+    if file::file_exists(path) {
+        file::create_routine_backup(path).map_err(|e| format!("Warning: Backup failed: {}", e))?;
+    }
+
+    let pass = if *is_unencrypt {
+        None
+    } else {
+        Some(get_effective_password(password)?)
+    };
+
+    for parsed in parsed_records {
+        let secret = if *is_unencrypt {
+            parsed.secret.clone()
+        } else {
+            otp::encrypt(&parsed.secret, pass.as_ref().unwrap())
+        };
+
+        let record = Record {
+            alias: parsed.alias,
+            secret,
+            is_unencrypted: *is_unencrypt,
+            algorithm: parsed.algorithm,
+            digits: parsed.digits,
+            period: parsed.period,
+            created_at: parsed.created_at,
+        };
+
+        current_records.push(record);
+    }
+
+    let lines: Vec<String> = current_records
+        .iter()
+        .map(serde_json::to_string)
+        .collect::<Result<Vec<String>, serde_json::Error>>()
+        .map_err(|e| format!("Serialization error: {e}"))?;
+
+    let content = lines.join("\n") + "\n";
+    file::overwrite_file(path, &content)
+        .map_err(|e| format!("Error: Failed to save changes: {e}"))?;
+
+    println!("Successfully imported {count} records.");
     Ok(())
 }

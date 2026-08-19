@@ -2,13 +2,25 @@ use serde::{Deserialize, Serialize};
 use std::fmt;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+fn default_digits() -> u8 {
+    6
+}
+
+fn default_period() -> u32 {
+    30
+}
+
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct Record {
     pub alias: String,
     pub secret: String,
-    pub is_unencrypted: bool, // only for DEBUG, store secret unencrypted
+    pub is_unencrypted: bool,
     pub algorithm: String,
-    pub created_at: u64, // Unix timestamp in sec
+    #[serde(default = "default_digits")]
+    pub digits: u8,
+    #[serde(default = "default_period")]
+    pub period: u32,
+    pub created_at: u64,
 }
 
 impl Record {
@@ -24,6 +36,8 @@ impl Record {
             secret,
             is_unencrypted,
             algorithm: "sha1".to_string(),
+            digits: default_digits(),
+            period: default_period(),
             created_at: since_the_epoch,
         }
     }

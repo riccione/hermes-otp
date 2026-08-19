@@ -32,9 +32,17 @@ pub struct EncryptArgs {
 pub enum Commands {
     /// Adds code to hermes-otp
     Add {
-        alias: String,
+        /// Alias for the entry (required unless using --otpauth or --import)
+        alias: Option<String>,
+        /// Secret code (required unless using --otpauth or --import)
         #[clap(short = 'c', long)]
-        code: String,
+        code: Option<String>,
+        /// Import from otpauth:// URI
+        #[clap(long, conflicts_with_all = ["code", "alias"])]
+        otpauth: Option<String>,
+        /// Import multiple otpauth:// URIs from a file (one per line)
+        #[clap(long, conflicts_with_all = ["code", "otpauth"])]
+        import: Option<String>,
         #[clap(flatten)]
         encryption: EncryptArgs,
     },

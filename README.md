@@ -57,6 +57,8 @@ Built with:
 - [rpassword](https://crates.io/crates/rpassword)
 - [serde](https://crates.io/crates/serde)
 - [serde_json](https://crates.io/crates/serde_json)
+- [url](https://crates.io/crates/url)
+- [urlencoding](https://crates.io/crates/urlencoding)
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 
@@ -88,9 +90,11 @@ There are 2 env variables:
 
 Commands:
 
-* `add -a <ALIAS> -c <CODE> [OPTIONS]`: Add new record.
-* `remove -a <ALIAS> [OPTIONS]`: Remove record.
-* `update -a <ALIAS> -c <CODE> [OPTIONS]`: Update code by alias.
+* `add <ALIAS> -c <CODE> [OPTIONS]`: Add new record.
+* `add --otpauth <OTPAUTH_URI> [OPTIONS]`: Import from otpauth:// URI.
+* `add --import <FILE> [OPTIONS]`: Batch import from file (one URI per line).
+* `remove <ALIAS> [OPTIONS]`: Remove record.
+* `update <ALIAS> -c <CODE> [OPTIONS]`: Update code by alias.
 * `rename <OLD ALIAS> <NEW ALIAS> [OPTIONS]`: Rename alias.
 * `ls [OPTIONS]`: Get all OTP codes.
 * `ls <ALIAS>`: Get OTP code by alias.
@@ -108,6 +112,8 @@ Flags:
 * `-q`, `--quiet`: Only for `ls <ALIAS>`. Do not display progress bar.
 * `-e`, `--exact`: Only for `ls <ALIAS`. Exact match.
 * `-f [table, json]`, `--format [table, json]`: Only for `ls` command. Format output as table (default) or as JSON.
+* `--otpauth <URI>`: Import from otpauth:// URI.
+* `--import <FILE>`: Import multiple URIs from a file.
 
 ### Pipeline Integration
 
@@ -146,6 +152,24 @@ hermes-otp ls my_alias | xclip -selection clipboard
 **macOS**
 ```sh
 hermes-otp ls my_alias | pbcopy
+```
+
+### Import from otpauth:// URI
+
+Single URI:
+```sh
+hermes-otp add --otpauth "otpauth://totp/Example:alice@example.com?secret=JBSWY3DPEHPK3PXP&issuer=Example"
+```
+
+Batch import from file (one URI per line):
+```sh
+hermes-otp add --import /path/to/uris.txt
+```
+
+Example file format:
+```
+otpauth://totp/GitHub:alice?secret=JBSWY3DPEHPK3PXP&issuer=GitHub
+otpauth://totp/Google:bob?secret=ONSWY3DPEHPK3PXP&issuer=Google
 ```
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>

@@ -5,6 +5,7 @@ mod cmd;
 mod file;
 mod models;
 mod otp;
+mod otpauth;
 mod ui;
 
 use args::{Cli, Commands};
@@ -35,15 +36,35 @@ fn run(command: Commands, codex_path: PathBuf) -> Result<(), String> {
         Commands::Add {
             alias,
             code,
+            otpauth: otpauth_uri,
+            import: import_file,
             encryption,
         } => {
-            cmd::add(
-                &codex_path,
-                &alias,
-                &code,
-                &encryption.unencrypt,
-                &encryption.password,
-            )?;
+            if let Some(uri) = otpauth_uri {
+                cmd::add_from_otpauth(
+                    &codex_path,
+                    &uri,
+                    &encryption.unencrypt,
+                    &encryption.password,
+                )?;
+            } else if let Some(file_path) = import_file {
+                cmd::add_batch(
+                    &codex_path,
+                    &file_path,
+                    &encryption.unencrypt,
+                    &encryption.password,
+                )?;
+            } else {
+                let alias = alias.ok_or("Error: alias is required")?;
+                let code = code.ok_or("Error: code is required")?;
+                cmd::add(
+                    &codex_path,
+                    &alias,
+                    &code,
+                    &encryption.unencrypt,
+                    &encryption.password,
+                )?;
+            }
         }
 
         Commands::Remove { alias } => {

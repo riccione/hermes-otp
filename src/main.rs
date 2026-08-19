@@ -22,11 +22,11 @@ fn main() {
 
 fn resolve_codex_path(cli: &Cli) -> PathBuf {
     // priority 1 => --path
-    // priority 2 => env var HERMES_PATH
-    // priority 3 => default location ~/.config/hermes/
+    // priority 2 => env var HERMES_OTP_PATH
+    // priority 3 => default location ~/.config/hermes-otp/
     cli.path
         .clone()
-        .or_else(|| std::env::var("HERMES_PATH").ok().map(PathBuf::from))
+        .or_else(|| std::env::var("HERMES_OTP_PATH").ok().map(PathBuf::from))
         .unwrap_or_else(file::get_default_path)
 }
 

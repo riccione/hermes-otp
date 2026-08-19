@@ -19,7 +19,7 @@ fn get_effective_password(password: &Option<String>) -> Result<String, String> {
     password
         .as_deref()
         .map(String::from)
-        .or_else(|| std::env::var("HERMES_PASSWORD").ok())
+        .or_else(|| std::env::var("HERMES_OTP_PASSWORD").ok())
         .map(Ok)
         .unwrap_or_else(|| {
             rpassword::prompt_password("Enter password: ").map_err(|e| format!("TTY error: {e}"))

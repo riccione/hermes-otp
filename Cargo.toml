@@ -1,11 +1,11 @@
 [package]
-name = "hermes"
+name = "hermes-otp"
 version = "0.6.0"
 edition = "2024"
-description = "Hermes: CLI OTP manager app"
-homepage = "https://github.com/riccione/hermes"
-documentation = "https://github.com/riccione/hermes"
-repository = "https://github.com/riccione/hermes"
+description = "Hermes-OTP: CLI OTP manager app"
+homepage = "https://github.com/riccione/hermes-otp"
+documentation = "https://github.com/riccione/hermes-otp"
+repository = "https://github.com/riccione/hermes-otp"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 

@@ -30,7 +30,7 @@ pub struct EncryptArgs {
 
 #[derive(Subcommand)]
 pub enum Commands {
-    /// Adds code to the hermes
+    /// Adds code to hermes-otp
     Add {
         alias: String,
         #[clap(short = 'c', long)]
@@ -38,7 +38,7 @@ pub enum Commands {
         #[clap(flatten)]
         encryption: EncryptArgs,
     },
-    /// Remove code from the hermes
+    /// Remove code from hermes-otp
     Remove { alias: String },
     /// Update code by alias
     Update {

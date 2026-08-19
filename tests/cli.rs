@@ -8,7 +8,7 @@ const PASSWORD: &str = "password";
 
 /// helper fn hermes pointing to a temp file
 fn hermes(path: &std::path::Path) -> assert_cmd::Command {
-    let mut cmd = cargo_bin_cmd!("hermes");
+    let mut cmd = cargo_bin_cmd!("hermes-otp");
     cmd.arg("--path").arg(path);
     cmd
 }

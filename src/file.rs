@@ -5,7 +5,7 @@ use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 
 const FILE_CODEX: &str = "codex";
-const PROJECT: &str = "hermes";
+const PROJECT: &str = "hermes-otp";
 
 pub fn get_default_path() -> PathBuf {
     // using dirs fn to get location of config directory

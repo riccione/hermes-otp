@@ -97,7 +97,6 @@ Commands:
 * `ls <PARTIAL MATCH>`: Get OTP codes by partial match. 
 * `ls --exact <ALIAS>`: Get OTP codes by exact match. 
 * `config`: Show location of the codex file.
-* `migrate`: Migrate legacy codex format to JSON.
 
 Flags:
 

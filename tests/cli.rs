@@ -33,17 +33,12 @@ fn fail_add_missing_args() -> Result<(), Box<dyn std::error::Error>> {
     let file = NamedTempFile::new()?;
     let path = file.path();
 
-    // 'add' fails without -a and -c
     hermes(path)
-        .arg("--path")
-        .arg(file.path())
         .arg("add")
         .assert()
         .failure()
-        .code(2)
-        .stderr(predicate::str::contains(
-            "the following required arguments were not provided",
-        ));
+        .code(1)
+        .stderr(predicate::str::contains("alias is required"));
 
     Ok(())
 }

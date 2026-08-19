@@ -3,12 +3,12 @@
 <!-- PROJECT SHIELDS -->
 <div align="center">
 
-[![CI](https://github.com/riccione/hermes/actions/workflows/ci.yml/badge.svg)](https://github.com/riccione/hermes/actions/workflows/ci.yml)
+[![CI](https://github.com/riccione/hermes-otp/actions/workflows/ci.yml/badge.svg)](https://github.com/riccione/hermes-otp/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
 </div>
 <div align="center">
-  <h3 align="center">Hermes: CLI OTP manager</h3>
+  <h3 align="center">Hermes-OTP: CLI OTP manager</h3>
 </div>
 
 <!-- TABLE OF CONTENTS -->
@@ -72,7 +72,7 @@ Built with:
 Build from source:
 `cargo build --release`
 
-The binary is located in [target/release/hermes](https://github.com/riccione/hermes/releases).
+The binary is located in [target/release/hermes-otp](https://github.com/riccione/hermes-otp/releases).
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 
@@ -83,8 +83,8 @@ Running without arguments shows help.
 
 There are 2 env variables:
 
-* `HERMES_PASSWORD`: Password for codes.
-* `HERMES_PATH`: Path to codex file.
+* `HERMES_OTP_PASSWORD`: Password for codes.
+* `HERMES_OTP_PATH`: Path to codex file.
 
 Commands:
 
@@ -111,41 +111,41 @@ Flags:
 
 ### Pipeline Integration
 
-Hermes is designed for scripting and automation. Use `--format json` for machine-readable output and `-q` to suppress interactive prompts.
+Hermes-OTP is designed for scripting and automation. Use `--format json` for machine-readable output and `-q` to suppress interactive prompts.
 
 **Generate OTP in a script:**
 ```sh
-OTP=$(hermes ls my_alias -q --format json | jq -r '.otp')
+OTP=$(hermes-otp ls my_alias -q --format json | jq -r '.otp')
 curl -X POST https://api.example.com/auth -d "otp=$OTP"
 ```
 
 **Use with environment variables:**
 ```sh
-export HERMES_PASSWORD="mysecret"
-export HERMES_PATH="/secure/codex.json"
-hermes ls my_alias -q
+export HERMES_OTP_PASSWORD="mysecret"
+export HERMES_OTP_PATH="/secure/codex.json"
+hermes-otp ls my_alias -q
 ```
 
 **Non-interactive mode (no progress bar):**
 ```sh
-hermes ls my_alias -q | grep -oE '[0-9]{6}'
+hermes-otp ls my_alias -q | grep -oE '[0-9]{6}'
 ```
 
 ### Automatically copy OTP code to clipboard
 
 **Wayland**
 ```sh
-hermes ls my_alias | wl-copy
+hermes-otp ls my_alias | wl-copy
 ```
 
 **X11**
 ```sh
-hermes ls my_alias | xclip -selection clipboard
+hermes-otp ls my_alias | xclip -selection clipboard
 ```
 
 **macOS**
 ```sh
-hermes ls my_alias | pbcopy
+hermes-otp ls my_alias | pbcopy
 ```
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
@@ -187,7 +187,7 @@ Distributed under the MIT License. See `LICENSE` for more information.
 
 Just create an issue if you need something.
 
-Project Link: [https://github.com/riccione/hermes](https://github.com/riccione/hermes)
+Project Link: [https://github.com/riccione/hermes-otp](https://github.com/riccione/hermes-otp)
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 

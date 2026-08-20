@@ -59,6 +59,7 @@ Built with:
 - [serde_json](https://crates.io/crates/serde_json)
 - [url](https://crates.io/crates/url)
 - [urlencoding](https://crates.io/crates/urlencoding)
+- [nucleo-matcher](https://crates.io/crates/nucleo-matcher)
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 
@@ -111,6 +112,7 @@ Flags:
 * `--password`: WARNING: Using this flag leaves password in shell history.
 * `-q`, `--quiet`: Only for `ls <ALIAS>`. Do not display progress bar.
 * `-e`, `--exact`: Only for `ls <ALIAS`. Exact match.
+* `-z`, `--fuzzy`: Only for `ls`. Fuzzy search across aliases (sorted by match score).
 * `-f [table, json]`, `--format [table, json]`: Only for `ls` command. Format output as table (default) or as JSON.
 * `--otpauth <URI>`: Import from otpauth:// URI.
 * `--import <FILE>`: Import multiple URIs from a file.

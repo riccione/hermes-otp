@@ -448,3 +448,92 @@ pub fn add_batch(
     println!("Successfully imported {count} records.");
     Ok(())
 }
+
+pub fn export(codex_path: &Path, output_path: &Path) -> Result<(), String> {
+    let records = file::read_codex(codex_path)?;
+
+    if records.is_empty() {
+        return Err("No records to export.".to_string());
+    }
+
+    let json =
+        serde_json::to_string_pretty(&records).map_err(|e| format!("Serialization error: {e}"))?;
+
+    file::ensure_dir_exists(output_path).map_err(|e| e.to_string())?;
+    std::fs::write(output_path, &json)
+        .map_err(|e| format!("Error writing to '{}': {e}", output_path.display()))?;
+
+    println!(
+        "Exported {} records to '{}'.",
+        records.len(),
+        output_path.display()
+    );
+    Ok(())
+}
+
+pub fn import(codex_path: &Path, input_path: &Path) -> Result<(), String> {
+    let content = std::fs::read_to_string(input_path)
+        .map_err(|e| format!("Error reading '{}': {e}", input_path.display()))?;
+
+    let imported: Vec<Record> = serde_json::from_str(&content)
+        .map_err(|e| format!("Invalid JSON in '{}': {e}", input_path.display()))?;
+
+    if imported.is_empty() {
+        return Err("No records found in import file.".to_string());
+    }
+
+    let existing = if file::file_exists(codex_path) {
+        file::read_codex(codex_path)?
+    } else {
+        Vec::new()
+    };
+
+    for record in &imported {
+        if existing.iter().any(|r| r.alias == record.alias) {
+            return Err(format!(
+                "Error: Alias '{}' already exists in codex. Aborting import.",
+                record.alias
+            ));
+        }
+    }
+
+    let duplicates: Vec<&str> = imported
+        .iter()
+        .enumerate()
+        .filter(|(i, r)| imported.iter().skip(i + 1).any(|r2| r2.alias == r.alias))
+        .map(|(_, r)| r.alias.as_str())
+        .collect();
+
+    if !duplicates.is_empty() {
+        return Err(format!(
+            "Error: Duplicate aliases in import file: {}. Aborting.",
+            duplicates.join(", ")
+        ));
+    }
+
+    file::ensure_dir_exists(codex_path).map_err(|e| e.to_string())?;
+
+    if file::file_exists(codex_path) {
+        file::create_routine_backup(codex_path)
+            .map_err(|e| format!("Warning: Backup failed: {e}"))?;
+    }
+
+    let mut all_records = existing;
+    for record in imported {
+        all_records.push(record);
+    }
+
+    let lines: Vec<String> = all_records
+        .iter()
+        .map(serde_json::to_string)
+        .collect::<Result<Vec<String>, serde_json::Error>>()
+        .map_err(|e| format!("Serialization error: {e}"))?;
+
+    let content = lines.join("\n") + "\n";
+    file::overwrite_file(codex_path, &content)
+        .map_err(|e| format!("Error: Failed to save changes: {e}"))?;
+
+    let count = all_records.len();
+    println!("Successfully imported {count} records total.");
+    Ok(())
+}

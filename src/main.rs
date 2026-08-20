@@ -118,6 +118,14 @@ fn run(command: Commands, codex_path: PathBuf) -> Result<(), String> {
                 .then(|| println!("{}", codex_path.display()))
                 .ok_or_else(|| format!("Codex file does not exists at {}", codex_path.display()))?;
         }
+
+        Commands::Export { output } => {
+            cmd::export(&codex_path, &output)?;
+        }
+
+        Commands::Import { input } => {
+            cmd::import(&codex_path, &input)?;
+        }
     }
     Ok(())
 }

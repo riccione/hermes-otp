@@ -1,4 +1,23 @@
-## [unreleased]
+## [0.7.0] - 2026-08-20
+
+### Documentation
+
+- Improve README with badges, pipeline examples, and fixes (#77)
+- Update README and help text for hermes-otp rename
+- Document otpauth import feature
+- Document fuzzy search feature
+- Document export and import commands
+
+### Features
+
+- *(deps)* Add url and urlencoding for otpauth parsing
+- *(models)* Add digits and period fields to Record
+- *(otpauth)* Add otpauth:// URI parsing module
+- *(cli)* Add --otpauth and --import options to add command
+- *(deps)* Add nucleo-matcher for fuzzy search
+- *(ls)* Add --fuzzy flag with score-based matching
+- *(cli)* Add export and import subcommands
+- *(cmd)* Implement JSON export and import
 
 ### Miscellaneous Tasks
 
@@ -8,6 +27,20 @@
 - Upgrade actions/checkout to v7
 - Migrate to reusable Rust workflow via commit SHA
 - Fix release workflow
+- Initialize changelog and release configuration
+- Add pre-commit hook for Rust code quality checks
+
+### Refactor
+
+- Remove migrate command and legacy format support
+- Update tests and docs for legacy removal
+- Rename package and binary to hermes-otp
+- Rename env vars and config path to hermes-otp
+
+### Testing
+
+- Update fail_add_missing_args for new add command behavior
+- Add export/import integration tests
 ## [0.6.0] - 2026-06-01
 
 ### Bug Fixes

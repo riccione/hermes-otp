@@ -66,8 +66,11 @@ pub enum Commands {
         alias: Option<String>,
         #[clap(short, long)]
         quiet: bool,
-        #[clap(short, long)]
+        #[clap(short, long, conflicts_with = "fuzzy")]
         exact: bool,
+        /// Fuzzy search across aliases (sorted by match score)
+        #[clap(short = 'z', long, conflicts_with = "exact")]
+        fuzzy: bool,
         #[arg(short = 'f', long, value_enum, default_value_t = OutputFormat::Table)]
         format: OutputFormat,
         #[clap(flatten)]

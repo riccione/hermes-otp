@@ -202,6 +202,63 @@ fn ls_partial_search_isolated() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 #[test]
+fn ls_fuzzy_search_isolated() -> Result<(), Box<dyn std::error::Error>> {
+    let file = NamedTempFile::new()?;
+    let path = file.path();
+
+    hermes(path)
+        .arg("add")
+        .args(["google", "-c", CODE, "--password", PASSWORD])
+        .assert()
+        .success();
+
+    hermes(path)
+        .arg("add")
+        .args(["goodreads", "-c", CODE, "--password", PASSWORD])
+        .assert()
+        .success();
+
+    hermes(path)
+        .arg("add")
+        .args(["github", "-c", CODE, "--password", PASSWORD])
+        .assert()
+        .success();
+
+    // fuzzy "ggl" should match "google"
+    hermes(path)
+        .arg("ls")
+        .args(["-z", "ggl", "--password", PASSWORD])
+        .arg("-q")
+        .assert()
+        .success();
+
+    // fuzzy "gih" should match "github" (g, i, h in order)
+    hermes(path)
+        .arg("ls")
+        .args(["-z", "gih", "--password", PASSWORD])
+        .arg("-q")
+        .assert()
+        .success();
+
+    // fuzzy "oo" should match "google" and "goodreads"
+    hermes(path)
+        .arg("ls")
+        .args(["-z", "oo", "--password", PASSWORD])
+        .arg("-q")
+        .assert()
+        .success();
+
+    // fuzzy "nope" should match nothing
+    hermes(path)
+        .arg("ls")
+        .args(["-z", "nope", "--password", PASSWORD])
+        .assert()
+        .failure();
+
+    Ok(())
+}
+
+#[test]
 fn ls_json_format_isolated() -> Result<(), Box<dyn std::error::Error>> {
     let file = NamedTempFile::new()?;
     let path = file.path();

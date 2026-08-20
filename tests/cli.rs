@@ -336,3 +336,138 @@ fn test_ls_handles_mashed_json_records() -> Result<(), Box<dyn std::error::Error
 
     Ok(())
 }
+
+#[test]
+fn export_creates_valid_json() -> Result<(), Box<dyn std::error::Error>> {
+    let codex = NamedTempFile::new()?;
+    let export_file = NamedTempFile::new()?;
+    let export_path = export_file.path().to_path_buf();
+
+    hermes(codex.path())
+        .arg("add")
+        .args(["alpha", "-c", CODE, "--password", PASSWORD])
+        .assert()
+        .success();
+
+    hermes(codex.path())
+        .arg("add")
+        .args(["beta", "-c", CODE, "--password", PASSWORD])
+        .assert()
+        .success();
+
+    hermes(codex.path())
+        .arg("export")
+        .arg("-o")
+        .arg(&export_path)
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Exported 2 records"));
+
+    let content = std::fs::read_to_string(&export_path)?;
+    let json: serde_json::Value = serde_json::from_str(&content)?;
+    assert!(json.is_array());
+    let arr = json.as_array().unwrap();
+    assert_eq!(arr.len(), 2);
+
+    Ok(())
+}
+
+#[test]
+fn import_from_json_file() -> Result<(), Box<dyn std::error::Error>> {
+    let codex = NamedTempFile::new()?;
+    let json_file = NamedTempFile::new()?;
+
+    let records = serde_json::json!([
+        {
+            "alias": "imported_one",
+            "secret": CODE,
+            "is_unencrypted": true,
+            "algorithm": "sha1",
+            "digits": 6,
+            "period": 30,
+            "created_at": 1000000
+        },
+        {
+            "alias": "imported_two",
+            "secret": CODE,
+            "is_unencrypted": true,
+            "algorithm": "sha1",
+            "digits": 6,
+            "period": 30,
+            "created_at": 1000001
+        }
+    ]);
+    std::fs::write(json_file.path(), serde_json::to_string_pretty(&records)?)?;
+
+    hermes(codex.path())
+        .arg("import")
+        .arg(json_file.path())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("2 records"));
+
+    hermes(codex.path())
+        .arg("ls")
+        .arg("imported_one")
+        .arg("-q")
+        .assert()
+        .success();
+
+    hermes(codex.path())
+        .arg("ls")
+        .arg("imported_two")
+        .arg("-q")
+        .assert()
+        .success();
+
+    Ok(())
+}
+
+#[test]
+fn import_rejects_duplicate_alias() -> Result<(), Box<dyn std::error::Error>> {
+    let codex = NamedTempFile::new()?;
+    let json_file = NamedTempFile::new()?;
+
+    hermes(codex.path())
+        .arg("add")
+        .args(["existing", "-c", CODE, "--password", PASSWORD, "-u"])
+        .assert()
+        .success();
+
+    let records = serde_json::json!([{
+        "alias": "existing",
+        "secret": CODE,
+        "is_unencrypted": true,
+        "algorithm": "sha1",
+        "digits": 6,
+        "period": 30,
+        "created_at": 1000000
+    }]);
+    std::fs::write(json_file.path(), serde_json::to_string_pretty(&records)?)?;
+
+    hermes(codex.path())
+        .arg("import")
+        .arg(json_file.path())
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("already exists"));
+
+    Ok(())
+}
+
+#[test]
+fn import_rejects_invalid_json() -> Result<(), Box<dyn std::error::Error>> {
+    let codex = NamedTempFile::new()?;
+    let json_file = NamedTempFile::new()?;
+
+    std::fs::write(json_file.path(), "not valid json {{{")?;
+
+    hermes(codex.path())
+        .arg("import")
+        .arg(json_file.path())
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("Invalid JSON"));
+
+    Ok(())
+}

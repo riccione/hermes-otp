@@ -78,4 +78,15 @@ pub enum Commands {
     },
     /// Show location of codex file
     Config {},
+    /// Export codex to a JSON file
+    Export {
+        /// Output file path
+        #[arg(short = 'o', long)]
+        output: PathBuf,
+    },
+    /// Import records from a JSON file
+    Import {
+        /// Input JSON file path
+        input: PathBuf,
+    },
 }

@@ -102,6 +102,8 @@ Commands:
 * `ls <PARTIAL MATCH>`: Get OTP codes by partial match. 
 * `ls --exact <ALIAS>`: Get OTP codes by exact match. 
 * `config`: Show location of the codex file.
+* `export -o <FILE>`: Export all records to a JSON file (backup).
+* `import <FILE>`: Import records from a JSON file.
 
 Flags:
 
@@ -172,6 +174,33 @@ Example file format:
 ```
 otpauth://totp/GitHub:alice?secret=JBSWY3DPEHPK3PXP&issuer=GitHub
 otpauth://totp/Google:bob?secret=ONSWY3DPEHPK3PXP&issuer=Google
+```
+
+### Export and Import
+
+Export all records to a JSON backup file:
+```sh
+hermes-otp export -o backup.json
+```
+
+Import records from a JSON file:
+```sh
+hermes-otp import backup.json
+```
+
+The JSON format is a standard array of record objects:
+```json
+[
+  {
+    "alias": "GitHub:alice",
+    "secret": "JBSWY3DPEHPK3PXP",
+    "is_unencrypted": true,
+    "algorithm": "sha1",
+    "digits": 6,
+    "period": 30,
+    "created_at": 1724110000
+  }
+]
 ```
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>

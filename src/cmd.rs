@@ -5,6 +5,7 @@ use crate::otp;
 use crate::otpauth::OtpAuth;
 use crate::ui::Table;
 use data_encoding::BASE32_NOPAD;
+use nucleo_matcher::{Config, Utf32Str};
 use std::path::Path;
 
 fn sanitize_and_validate_code(code: &str) -> Result<String, String> {
@@ -152,6 +153,7 @@ pub fn remove(path: &Path, alias: &str) -> Result<(), String> {
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn ls(
     path: &Path,
     alias_filter: &Option<String>,
@@ -160,23 +162,44 @@ pub fn ls(
     format: &OutputFormat,
     quiet: bool,
     exact_match: bool,
+    fuzzy: bool,
 ) -> Result<(), String> {
     let records = file::read_codex(path)?;
 
     // apply search filter
     let filtered: Vec<&Record> = if let Some(filter) = alias_filter {
-        let filter_lower = filter.to_lowercase();
-        records
-            .iter()
-            .filter(|r| {
-                let alias_lower = r.alias.to_lowercase();
-                if exact_match {
-                    alias_lower == filter_lower
-                } else {
-                    alias_lower.contains(&filter_lower)
-                }
-            })
-            .collect()
+        if fuzzy {
+            let mut matcher = nucleo_matcher::Matcher::new(Config::DEFAULT);
+
+            let mut scored: Vec<(u32, &Record)> = records
+                .iter()
+                .filter_map(|r| {
+                    let mut buf = Vec::new();
+                    let haystack = Utf32Str::new(&r.alias, &mut buf);
+                    let mut fbuf = Vec::new();
+                    let needle = Utf32Str::new(filter, &mut fbuf);
+                    matcher
+                        .fuzzy_match(haystack, needle)
+                        .map(|score| (score as u32, r))
+                })
+                .collect();
+
+            scored.sort_by_key(|b| std::cmp::Reverse(b.0));
+            scored.into_iter().map(|(_, r)| r).collect()
+        } else {
+            let filter_lower = filter.to_lowercase();
+            records
+                .iter()
+                .filter(|r| {
+                    let alias_lower = r.alias.to_lowercase();
+                    if exact_match {
+                        alias_lower == filter_lower
+                    } else {
+                        alias_lower.contains(&filter_lower)
+                    }
+                })
+                .collect()
+        }
     } else {
         records.iter().collect()
     };

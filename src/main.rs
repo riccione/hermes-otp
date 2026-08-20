@@ -98,6 +98,7 @@ fn run(command: Commands, codex_path: PathBuf) -> Result<(), String> {
             format,
             encryption,
             exact,
+            fuzzy,
         } => {
             cmd::ls(
                 &codex_path,
@@ -107,6 +108,7 @@ fn run(command: Commands, codex_path: PathBuf) -> Result<(), String> {
                 &format,
                 quiet,
                 exact,
+                fuzzy,
             )?;
         }
 

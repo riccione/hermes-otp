@@ -1,7 +1,8 @@
 [package]
 name = "hermes-otp"
-version = "0.6.0"
+version = "0.7.0"
 edition = "2024"
+license = "MIT"
 description = "Hermes-OTP: CLI OTP manager app"
 homepage = "https://github.com/riccione/hermes-otp"
 documentation = "https://github.com/riccione/hermes-otp"

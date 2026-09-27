@@ -17,4 +17,4 @@ on:
 
 jobs:
   ci:
-    uses: riccione/github-workflows/.github/workflows/rust-ci.yml@24ba5409c1eeac121965cedc2fb507b0387f25af
+    uses: riccione/github-workflows/.github/workflows/rust-ci.yml@a42157e21f91d87ff97e4a6a30f431f687052064

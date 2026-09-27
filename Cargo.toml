@@ -11,12 +11,28 @@ repository = "https://github.com/riccione/hermes-otp"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [workspace.metadata.release]
-# Custom prefix for your Git tags (default is empty or the version number)
-tag-prefix = ""
-# Automatically push to your remote repository after committing and tagging
+# We tag manually from `main` after the release PR is merged,
+# so cargo-release must never create the tag itself.
+tag = false
+
+# Format to use if/when a tag is created (kept here for reference/consistency,
+# even though `tag = false` means cargo-release itself won't create it).
+tag-name = "v{{version}}"
+
+# We push manually (release branch, then tag from main after merge),
+# so cargo-release must never push.
 push = false
-# Skip publishing to crates.io (useful for private binaries/libraries)
+
+# Private app, not published to crates.io.
 publish = false
+
+# Regenerate CHANGELOG.md with git-cliff before the release commit,
+# so the changelog update ships in the same commit as the version bump.
+pre-release-hook = ["git", "cliff", "-o", "CHANGELOG.md", "--tag", "v{{version}}"]
+
+# Only allow running `cargo release` from a release prep branch
+# (e.g. release/v1.2.3), never directly on the protected `main` branch.
+allow-branch = ["release/v*"]
 
 [profile.release]
 strip = true

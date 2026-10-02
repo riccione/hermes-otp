@@ -1,3 +1,9 @@
+## [0.7.2] - 2026-10-02
+
+### Miscellaneous Tasks
+
+- *(ci)* Update reusable release workflow
+- *(ci)* Pin release workflow to merged version
 ## [0.7.1] - 2026-10-02
 
 ### Miscellaneous Tasks
@@ -7,6 +13,7 @@
 - Pin Rust toolchain and components (#88)
 - *(release)* Configure cargo-release for manual tagging and changelog generation
 - Update reusable workflows to latest commit
+- Release hermes-otp version 0.7.1
 ## [0.7.0] - 2026-08-20
 
 ### Documentation

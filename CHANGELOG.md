@@ -1,3 +1,12 @@
+## [0.7.1] - 2026-10-02
+
+### Miscellaneous Tasks
+
+- Update version of reusable release workflow
+- Pin Rust toolchain version
+- Pin Rust toolchain and components (#88)
+- *(release)* Configure cargo-release for manual tagging and changelog generation
+- Update reusable workflows to latest commit
 ## [0.7.0] - 2026-08-20
 
 ### Documentation
@@ -103,6 +112,11 @@
 
 ### Features
 
+- Initial implementation of live OTP list
+- "Press any key to exit" prompt for live OTP list
+- Safe exits for live OTP list
+- Make alias a positional argument for the ls command
+- Make alias a positional argument for all commands
 - [**breaking**] Deprecate legacy format and require migration
 - *(ls)* Add exact match filtering with --exact flag
 
@@ -127,14 +141,6 @@
 - Verify robust parsing of mashed JSON records
 ## [0.3.1] - 2026-01-15
 
-### Features
-
-- Initial implementation of live OTP list
-- "Press any key to exit" prompt for live OTP list
-- Safe exits for live OTP list
-- Make alias a positional argument for the ls command
-- Make alias a positional argument for all commands
-
 ### Miscellaneous Tasks
 
 - *(release)* Bump version to v0.3.1
@@ -144,19 +150,6 @@
 - Removed trimming of data before being appended to codex, since it resulted in the data to be all written into the first line making ls not work
 - Fix first write to codex
 ## [0.3.0] - 2026-01-11
-
-### Documentation
-
-- Add  flag description
-
-### Miscellaneous Tasks
-
-- Update actions
-
-### Other
-
-- Update app version to 0.3.0, update crates
-## [ci/update-actions] - 2026-01-11
 
 ### Bug Fixes
 
@@ -168,6 +161,7 @@
 
 - Add warning message for password arg
 - Update README
+- Add  flag description
 
 ### Features
 
@@ -188,6 +182,11 @@
 
 - Format code with cargo fmt
 - *(test)* Rename integration_tests to cli.rs #24
+- Update actions
+
+### Other
+
+- Update app version to 0.3.0, update crates
 
 ### Refactor
 

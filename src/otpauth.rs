@@ -43,21 +43,61 @@ impl OtpAuth {
             _ => decoded_label,
         };
 
-        let algorithm = query_params
-            .get("algorithm")
-            .cloned()
-            .unwrap_or_else(|| "sha1".to_string())
-            .to_lowercase();
+        let algorithm = match query_params.get("algorithm") {
+            None => "sha1".to_string(),
+            Some(raw) => {
+                let normalized = raw.to_lowercase();
 
-        let digits = query_params
-            .get("digits")
-            .and_then(|d| d.parse::<u8>().ok())
-            .unwrap_or(6);
+                if !matches!(normalized.as_str(), "sha1" | "sha256" | "sha512") {
+                    return Err(format!(
+                        "Unsupported OTP parameter (algorithm={raw}). \
+                         Only sha1, sha256 and sha512 are supported."
+                    ));
+                }
 
-        let period = query_params
-            .get("period")
-            .and_then(|p| p.parse::<u32>().ok())
-            .unwrap_or(30);
+                normalized
+            }
+        };
+
+        let digits = match query_params.get("digits") {
+            None => 6,
+            Some(raw) => {
+                let invalid = || {
+                    format!(
+                        "Unsupported OTP parameter (digits={raw}). \
+                         Only 6 to 8 digits are supported."
+                    )
+                };
+
+                let parsed = raw.parse::<u8>().map_err(|_| invalid())?;
+
+                if !(6..=8).contains(&parsed) {
+                    return Err(invalid());
+                }
+
+                parsed
+            }
+        };
+
+        let period = match query_params.get("period") {
+            None => 30,
+            Some(raw) => {
+                let invalid = || {
+                    format!(
+                        "Unsupported OTP parameter (period={raw}). \
+                         Period must be between 1 and 300 seconds."
+                    )
+                };
+
+                let parsed = raw.parse::<u32>().map_err(|_| invalid())?;
+
+                if !(1..=300).contains(&parsed) {
+                    return Err(invalid());
+                }
+
+                parsed
+            }
+        };
 
         let created_at = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -148,6 +188,53 @@ mod tests {
         assert!(res.is_err());
         let err = res.unwrap_err();
         assert!(err.to_lowercase().contains("totp") || err.to_lowercase().contains("otpauth"));
+    }
+
+    #[test]
+    fn test_seven_digits_are_accepted() {
+        let uri = "otpauth://totp/App:user?secret=JBSWY3DPEHPK3PXP&digits=7";
+        assert_eq!(OtpAuth::parse(uri).unwrap().digits, 7);
+    }
+
+    #[test]
+    fn test_rejects_invalid_digits() {
+        for raw in ["5", "9", "0", "abc"] {
+            let uri = format!("otpauth://totp/App:user?secret=JBSWY3DPEHPK3PXP&digits={raw}");
+            let err = OtpAuth::parse(&uri).unwrap_err();
+
+            assert!(err.contains(&format!("digits={raw}")), "{err}");
+            assert!(err.contains("Only 6 to 8 digits"), "{err}");
+        }
+    }
+
+    #[test]
+    fn test_rejects_invalid_period() {
+        for raw in ["0", "301", "abc"] {
+            let uri = format!("otpauth://totp/App:user?secret=JBSWY3DPEHPK3PXP&period={raw}");
+            let err = OtpAuth::parse(&uri).unwrap_err();
+
+            assert!(err.contains(&format!("period={raw}")), "{err}");
+            assert!(err.contains("between 1 and 300 seconds"), "{err}");
+        }
+    }
+
+    #[test]
+    fn test_rejects_unsupported_algorithm() {
+        let uri = "otpauth://totp/App:user?secret=JBSWY3DPEHPK3PXP&algorithm=md5";
+        let err = OtpAuth::parse(uri).unwrap_err();
+
+        assert!(err.contains("algorithm=md5"), "{err}");
+        assert!(err.contains("Only sha1, sha256 and sha512"), "{err}");
+    }
+
+    #[test]
+    fn test_defaults_apply_when_parameters_are_absent() {
+        let uri = "otpauth://totp/App:user?secret=JBSWY3DPEHPK3PXP";
+        let parsed = OtpAuth::parse(uri).unwrap();
+
+        assert_eq!(parsed.algorithm, "sha1");
+        assert_eq!(parsed.digits, 6);
+        assert_eq!(parsed.period, 30);
     }
 
     #[test]

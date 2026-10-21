@@ -1,6 +1,5 @@
 use crate::cmd::print_table;
 use crate::models::Record;
-use crate::otp;
 use console::Term;
 use std::sync::mpsc;
 use std::thread;
@@ -34,13 +33,15 @@ impl<'a> Table<'a> {
             }
         });
 
-        let mut rem = otp::get_remaining_seconds();
-        print_table(self.filtered, self.pass, rem, self.is_single_alias, false);
+        print_table(self.filtered, self.pass, self.is_single_alias, false);
         eprintln!("Press any key to exit");
         let _ = err.move_cursor_up(1);
 
         loop {
-            match rx.recv_timeout(Duration::from_millis(100)) {
+            // Redraw once per second. Records may use different periods, so
+            // there is no single rollover to wait for; a steady 1s refresh is
+            // both cheap and correct for any mix of 30s and 60s records.
+            match rx.recv_timeout(Duration::from_secs(1)) {
                 // A key was pressed! Exit immediately.
                 Ok(_) => break,
 
@@ -48,23 +49,17 @@ impl<'a> Table<'a> {
                 // Exit silently instead of looping forever.
                 Err(mpsc::RecvTimeoutError::Disconnected) => break,
 
-                // Just a normal 100ms timeout. Update the timer and redraw.
+                // Just a normal timeout. Redraw.
                 Err(mpsc::RecvTimeoutError::Timeout) => {}
             }
 
-            let new_rem = otp::get_remaining_seconds();
-
-            if new_rem != rem {
-                rem = new_rem;
-
-                if self.is_single_alias && self.filtered.len() == 1 {
-                    let _ = output.move_cursor_up(1);
-                    let _ = err.move_cursor_up(1);
-                } else {
-                    let _ = output.move_cursor_up(self.filtered.len() + 2);
-                }
-                print_table(self.filtered, self.pass, rem, self.is_single_alias, false);
+            if self.is_single_alias && self.filtered.len() == 1 {
+                let _ = output.move_cursor_up(1);
+                let _ = err.move_cursor_up(1);
+            } else {
+                let _ = output.move_cursor_up(self.filtered.len() + 2);
             }
+            print_table(self.filtered, self.pass, self.is_single_alias, false);
         }
     }
 }

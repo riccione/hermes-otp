@@ -254,6 +254,17 @@ The trade-off is that `ls` can only decrypt the records whose password you give
 it. Records encrypted with a different password are reported as failures, and
 the command exits `3` when some decrypted and some did not.
 
+### File permissions
+
+On Unix the codex is kept owner-only: the file is `0600` (`-rw-------`), and the
+app's own config directory is `0700` (`drwx------`). The same applies to the
+`codex.bak` backup and to files written by `export`. Existing files with looser
+permissions are repaired on the next write.
+
+A directory you pass with `--path` is never re-permissioned, since it may be a
+shared location such as `/tmp` or your home directory — only the codex file
+itself is restricted there.
+
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 
 <!-- Testing -->

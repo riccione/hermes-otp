@@ -30,10 +30,13 @@
     </li>
     <li><a href="#usage">Usage</a>
       <ul>
+        <li><a href="#updating-a-record">Updating a record</a></li>
+        <li><a href="#exit-codes">Exit codes</a></li>
         <li><a href="#pipeline-integration">Pipeline Integration</a></li>
         <li><a href="#automatically-copy-otp-code-to-clipboard">Clipboard</a></li>
       </ul>
     </li>
+    <li><a href="#security">Security</a></li>
     <li><a href="#testing">Testing</a></li>
     <li><a href="#contributing">Contributing</a></li>
     <li><a href="#license">License</a></li>
@@ -95,7 +98,7 @@ Commands:
 * `add --otpauth <OTPAUTH_URI> [OPTIONS]`: Import from otpauth:// URI.
 * `add --import <FILE> [OPTIONS]`: Batch import from file (one URI per line).
 * `remove <ALIAS> [OPTIONS]`: Remove record.
-* `update <ALIAS> -c <CODE> [OPTIONS]`: Update code by alias.
+* `update <ALIAS> -c <CODE> [OPTIONS]`: Replace the OTP secret of a record. Verifies the record's password first; a wrong password changes nothing.
 * `rename <OLD ALIAS> <NEW ALIAS> [OPTIONS]`: Rename alias.
 * `ls [OPTIONS]`: Get all OTP codes.
 * `ls <ALIAS>`: Get OTP code by alias.
@@ -118,6 +121,34 @@ Flags:
 * `-f [table, json]`, `--format [table, json]`: Only for `ls` command. Format output as table (default) or as JSON.
 * `--otpauth <URI>`: Import from otpauth:// URI.
 * `--import <FILE>`: Import multiple URIs from a file.
+
+### Updating a record
+
+```sh
+hermes-otp update <ALIAS> -c <NEW_CODE>
+```
+
+Prompts for that record's current password and verifies it by decrypting the
+record before anything is written. If the password is wrong:
+
+```
+Error: Incorrect password. Nothing was changed.
+```
+
+The replacement is encrypted with the same password. `-u` stores it in plain
+text instead, but the record's password is still required to verify access.
+
+### Exit codes
+
+| Code | Meaning |
+|------|---------|
+| `0` | Every matched record produced a code. |
+| `1` | Runtime error, or no record could produce a code (wrong password, corrupt secret, no match). |
+| `2` | Usage error (invalid flags or arguments). |
+| `3` | Partial: some records produced a code, some did not. |
+
+Exit code `3` exists because records can have different passwords; see
+[Independent record encryption](#independent-record-encryption).
 
 ### Pipeline Integration
 
@@ -202,6 +233,26 @@ The JSON format is a standard array of record objects:
   }
 ]
 ```
+
+<p align="right">(<a href="#readme-top">back to top</a>)</p>
+
+<!-- SECURITY -->
+## Security
+
+### Independent record encryption
+
+There is no vault key. Each record's secret is encrypted on its own, using the
+password supplied when that record was created. Different records can use
+different passwords: your `github` record can use one password and your `aws`
+record another.
+
+The upside is blast radius: if one record's password is compromised, the other
+records remain secure. `update` proves access by decrypting that one record
+before replacing it — it cannot verify a password against the whole file.
+
+The trade-off is that `ls` can only decrypt the records whose password you give
+it. Records encrypted with a different password are reported as failures, and
+the command exits `3` when some decrypted and some did not.
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 

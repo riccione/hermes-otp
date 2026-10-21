@@ -202,6 +202,55 @@ fn ls_partial_search_isolated() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 #[test]
+fn ls_exact_match_is_case_sensitive() -> Result<(), Box<dyn std::error::Error>> {
+    let file = NamedTempFile::new()?;
+    let path = file.path();
+
+    hermes(path)
+        .arg("add")
+        .args(["Google", "-c", CODE, "--password", PASSWORD, "-u"])
+        .assert()
+        .success();
+
+    // exact match with the same case should find the record
+    hermes(path)
+        .arg("ls")
+        .args(["--exact", "Google", "--password", PASSWORD])
+        .arg("-q")
+        .assert()
+        .success();
+
+    // exact match with a different case should not find the record
+    hermes(path)
+        .arg("ls")
+        .args(["--exact", "google", "--password", PASSWORD])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "No record found with exact alias 'google'",
+        ));
+
+    hermes(path)
+        .arg("ls")
+        .args(["--exact", "GOOGLE", "--password", PASSWORD])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "No record found with exact alias 'GOOGLE'",
+        ));
+
+    // partial match stays case-insensitive
+    hermes(path)
+        .arg("ls")
+        .args(["google", "--password", PASSWORD])
+        .arg("-q")
+        .assert()
+        .success();
+
+    Ok(())
+}
+
+#[test]
 fn ls_fuzzy_search_isolated() -> Result<(), Box<dyn std::error::Error>> {
     let file = NamedTempFile::new()?;
     let path = file.path();

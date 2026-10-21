@@ -630,6 +630,97 @@ fn ls_json_omits_error_field_on_success() -> Result<(), Box<dyn std::error::Erro
 }
 
 #[test]
+fn ls_json_single_alias_is_object() -> Result<(), Box<dyn std::error::Error>> {
+    let file = NamedTempFile::new()?;
+    let path = file.path();
+
+    hermes(path)
+        .arg("add")
+        .args(["git", "-c", CODE, "--password", PASSWORD, "-u"])
+        .assert()
+        .success();
+
+    hermes(path)
+        .arg("add")
+        .args(["aws", "-c", CODE, "--password", PASSWORD, "-u"])
+        .assert()
+        .success();
+
+    let output = hermes(path)
+        .arg("ls")
+        .args(["git", "--password", PASSWORD, "--format", "json"])
+        .output()?;
+
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout)?;
+
+    // a unique alias match is a single object, so `jq .otp` works directly
+    assert!(json.is_object(), "single alias must be a JSON object");
+    assert_eq!(json["alias"], "git");
+    assert!(
+        json["otp"].as_str().is_some_and(|otp| otp.len() == 6),
+        "otp should be a 6 character string"
+    );
+
+    Ok(())
+}
+
+#[test]
+fn ls_json_partial_match_multiple_is_array() -> Result<(), Box<dyn std::error::Error>> {
+    let file = NamedTempFile::new()?;
+    let path = file.path();
+
+    for alias in ["google", "goodreads", "github"] {
+        hermes(path)
+            .arg("add")
+            .args([alias, "-c", CODE, "--password", PASSWORD, "-u"])
+            .assert()
+            .success();
+    }
+
+    let output = hermes(path)
+        .arg("ls")
+        .args(["goo", "--password", PASSWORD, "--format", "json"])
+        .output()?;
+
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout)?;
+
+    // an alias matching several records cannot be a single object
+    let array = json
+        .as_array()
+        .expect("multiple matches must stay a JSON array");
+    assert_eq!(array.len(), 2, "goo should match google and goodreads");
+    assert!(array.iter().all(|r| r["alias"] != "github"));
+
+    Ok(())
+}
+
+#[test]
+fn ls_json_single_alias_error_is_object() -> Result<(), Box<dyn std::error::Error>> {
+    let file = NamedTempFile::new()?;
+    let path = file.path();
+
+    hermes(path)
+        .arg("add")
+        .args(["aws", "-c", CODE, "--password", PASSWORD])
+        .assert()
+        .success();
+
+    let output = hermes(path)
+        .arg("ls")
+        .args(["aws", "--password", "wrong-password", "--format", "json"])
+        .output()?;
+
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout)?;
+
+    // the failure path keeps the object shape and reports the reason
+    assert!(json.is_object(), "single alias must be a JSON object");
+    assert_eq!(json["alias"], "aws");
+    assert_eq!(json["error"], "decryption failed");
+
+    Ok(())
+}
+
+#[test]
 fn update_wrong_password_leaves_record_intact() -> Result<(), Box<dyn std::error::Error>> {
     let file = NamedTempFile::new()?;
     let path = file.path();

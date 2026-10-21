@@ -160,6 +160,14 @@ OTP=$(hermes-otp ls my_alias -q --format json | jq -r '.otp')
 curl -X POST https://api.example.com/auth -d "otp=$OTP"
 ```
 
+An alias that matches a single record prints one JSON object; listing all
+records, or an alias that matches several, prints an array:
+
+```sh
+hermes-otp ls -f json my_alias | jq -r '.otp'     # one object
+hermes-otp ls -f json          | jq -r '.[].otp'  # array
+```
+
 **Use with environment variables:**
 ```sh
 export HERMES_OTP_PASSWORD="mysecret"

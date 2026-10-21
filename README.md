@@ -1,291 +1,261 @@
-<a name="readme-top"></a>
-
-<!-- PROJECT SHIELDS -->
 <div align="center">
 
-[![CI](https://github.com/riccione/hermes-otp/actions/workflows/ci.yml/badge.svg)](https://github.com/riccione/hermes-otp/actions/workflows/ci.yml)
+# Hermes-OTP
+
+**A TOTP manager for your terminal and your pipelines.**
+
+[![CI](https://github.com/riccione/hermes-otp/actions/workflows/ci.yml/badge.svg)](https://github.com/riccione/hermes-otp/actions)
+[![Release](https://img.shields.io/github/v/release/riccione/hermes-otp)](https://github.com/riccione/hermes-otp/releases)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
 </div>
-<div align="center">
-  <h3 align="center">Hermes-OTP: CLI OTP manager</h3>
-</div>
 
-<!-- TABLE OF CONTENTS -->
-<details>
-  <summary>Table of Contents</summary>
-  <ol>
-    <li>
-      <a href="#about-the-project">About The Project</a>
-      <ul>
-        <li><a href="#built-with">Built With</a></li>
-      </ul>
-    </li>
-    <li>
-      <a href="#getting-started">Getting Started</a>
-      <ul>
-        <li><a href="#prerequisites">Prerequisites</a></li>
-        <li><a href="#installation">Installation</a></li>
-      </ul>
-    </li>
-    <li><a href="#usage">Usage</a>
-      <ul>
-        <li><a href="#updating-a-record">Updating a record</a></li>
-        <li><a href="#exit-codes">Exit codes</a></li>
-        <li><a href="#pipeline-integration">Pipeline Integration</a></li>
-        <li><a href="#automatically-copy-otp-code-to-clipboard">Clipboard</a></li>
-      </ul>
-    </li>
-    <li><a href="#security">Security</a></li>
-    <li><a href="#testing">Testing</a></li>
-    <li><a href="#contributing">Contributing</a></li>
-    <li><a href="#license">License</a></li>
-    <li><a href="#contact">Contact</a></li>
-    <li><a href="#acknowledgments">Acknowledgments</a></li>
-  </ol>
-</details>
+Most TOTP managers are either graphical vaults or throwaway shell scripts.
+**Hermes-OTP** is a single, lightweight binary that is comfortable as a daily
+driver and well behaved in your CI/CD pipelines.
 
-<!-- ABOUT THE PROJECT -->
-## About The Project
+No runtime, no background daemon, no fragile wrapper.
 
-A CLI OTP manager designed for pipelines and automation. Generates TOTP codes programmatically with JSON output, environment variable support, and non-interactive mode.
+## Demo
 
-Built with:
-- [Clap](https://crates.io/crates/clap)
-- [Magic-crypt](https://crates.io/crates/magic-crypt)
-- [Data-encoding](https://crates.io/crates/data-encoding)
-- [Totp-lite](https://crates.io/crates/totp-lite)
-- [console](https://crates.io/crates/console)
-- [dirs](https://crates.io/crates/dirs)
-- [rpassword](https://crates.io/crates/rpassword)
-- [serde](https://crates.io/crates/serde)
-- [serde_json](https://crates.io/crates/serde_json)
-- [url](https://crates.io/crates/url)
-- [urlencoding](https://crates.io/crates/urlencoding)
-- [nucleo-matcher](https://crates.io/crates/nucleo-matcher)
+```console
+$ hermes-otp add github -c JBSWY3DPEHPK3PXP
+Record saved.
+621555
 
-<p align="right">(<a href="#readme-top">back to top</a>)</p>
+$ hermes-otp ls
+Alias           | OTP        | Rem
+----------------|------------|-----
+github          | 621555     | 22s  [##############......]
+aws             | 448915     | 22s  [##############......]
+Press any key to exit
 
-<!-- GETTING STARTED -->
-## Getting Started
+$ hermes-otp ls -q github
+621555
+```
 
-### Prerequisites
+The live view refreshes once a second and exits on any keypress. `-q` skips the
+countdown bar and the prompt, so it is safe to pipe.
 
-* Rust 1.85+
+## Why Hermes-OTP?
 
-### Installation
+- **Script-first:** native JSON output, clean stdout/stderr separation, and
+  standard exit codes.
+- **Full RFC 6238 support:** SHA-1, SHA-256 and SHA-512 records with custom
+  digits (6–8) and periods (1–300 s), added directly or imported.
+- **Encrypted at rest:** each record is encrypted independently with AES-256-CBC;
+  the codex is `0600` and its directory is `0700`.
+- **Single ~1 MB binary:** no runtime, no interpreter, no GPG dependency.
+- **Live when you want it, quiet when you don't:** an auto-refreshing view for
+  humans and a strict non-interactive mode for machines.
 
-Build from source:
-`cargo build --release`
+### How it compares
 
-The binary is located in [target/release/hermes-otp](https://github.com/riccione/hermes-otp/releases).
+| Feature | hermes-otp | oathtool | totp-cli | dotp | pass-otp |
+|---|---|---|---|---|---|
+| Encrypted storage | Yes (AES-256-CBC) | No | Yes (age) | Yes (Fernet) | Yes (GPG) |
+| **JSON output** | **Yes** | No | No | No | No |
+| **`otpauth://` import** | **Yes** | No | No (YAML only) | Yes | Yes |
+| **Custom algorithm/digits/period** | **Yes** | Yes (per call) | digits only | — | — |
+| Single binary | Yes (~1 MB) | Yes | Yes (Go) | No (Python) | No (Shell) |
+| Fuzzy search | Yes | No | No | Yes | No |
 
-<p align="right">(<a href="#readme-top">back to top</a>)</p>
+*Based on each project's published documentation, October 2026. `oathtool` is
+stateless and does not manage a vault of secrets.*
 
-<!-- USAGE EXAMPLES -->
-## Usage
+## Install
 
-Running without arguments shows help.
-
-There are 2 env variables:
-
-* `HERMES_OTP_PASSWORD`: Password for codes.
-* `HERMES_OTP_PATH`: Path to codex file.
-
-Commands:
-
-* `add <ALIAS> -c <CODE> [OPTIONS]`: Add new record.
-* `add -c <OTPAUTH_URI> [OPTIONS]`: Add from an otpauth:// URI (no alias needed).
-* `add --otpauth <OTPAUTH_URI> [OPTIONS]`: Import from otpauth:// URI.
-* `add --import <FILE> [OPTIONS]`: Batch import from file (one URI per line).
-* `remove <ALIAS> [OPTIONS]`: Remove record.
-* `update <ALIAS> -c <CODE> [OPTIONS]`: Replace the OTP secret of a record. Verifies the record's password first; a wrong password changes nothing.
-* `rename <OLD ALIAS> <NEW ALIAS> [OPTIONS]`: Rename alias.
-* `ls [OPTIONS]`: Get all OTP codes.
-* `ls <ALIAS>`: Get OTP code by alias.
-* `ls <PARTIAL MATCH>`: Get OTP codes by partial match. 
-* `ls --exact <ALIAS>`: Get OTP codes by exact match (case-sensitive). 
-* `config`: Show location of the codex file.
-* `export -o <FILE>`: Export all records to a JSON file (backup).
-* `import <FILE>`: Import records from a JSON file.
-
-Flags:
-
-* `-c`, `--code`: Base32 secret, or an `otpauth://` URI.
-* `-a`, `--algorithm`: Hash algorithm for `add`: `sha1` (default), `sha256`, `sha512`.
-* `-d`, `--digits`: Number of digits for `add`: 6 to 8 (default `6`).
-* `-t`, `--period`: Time step in seconds for `add`: 1 to 300 (default `30`).
-* `-p`, `--path`: Custom path to the codex file.
-* `-u`, `--unencrypt`: WARNING: Store the secret in plain text. Use for debugging only.
-* `--password`: WARNING: Using this flag leaves password in shell history.
-* `-q`, `--quiet`: Only for `ls`. Plain output for scripts: no countdown bar or interactive prompt.
-* `-e`, `--exact`: Only for `ls <ALIAS>`. Exact match (case-sensitive).
-* `-z`, `--fuzzy`: Only for `ls`. Fuzzy search across aliases (sorted by match score).
-* `-f [table, json]`, `--format [table, json]`: Only for `ls` command. Format output as table (default) or as JSON.
-* `--otpauth <URI>`: Import from otpauth:// URI.
-* `--import <FILE>`: Import multiple URIs from a file.
-
-### Adding a record with custom OTP parameters
-
-Most services use SHA-1, 6 digits and a 30 second step, which is the default:
+**Linux (x86_64):**
 
 ```sh
+curl -LO https://github.com/riccione/hermes-otp/releases/latest/download/hermes-otp_linux-x86_64
+chmod +x hermes-otp_linux-x86_64
+sudo mv hermes-otp_linux-x86_64 /usr/local/bin/hermes-otp
+```
+
+**macOS:**
+
+```sh
+# Apple Silicon
+curl -LO https://github.com/riccione/hermes-otp/releases/latest/download/hermes-otp_macos-arm64
+chmod +x hermes-otp_macos-arm64
+sudo mv hermes-otp_macos-arm64 /usr/local/bin/hermes-otp
+
+# Intel
+curl -LO https://github.com/riccione/hermes-otp/releases/latest/download/hermes-otp_macos-x86_64
+chmod +x hermes-otp_macos-x86_64
+sudo mv hermes-otp_macos-x86_64 /usr/local/bin/hermes-otp
+```
+
+**Windows:** download `hermes-otp_win-x86_64.exe` from the
+[releases page](https://github.com/riccione/hermes-otp/releases) and put it on
+your `PATH`.
+
+Every release also publishes `SHA256SUMS`.
+
+**With Cargo:**
+
+```sh
+cargo install --git https://github.com/riccione/hermes-otp
+```
+
+**From source** (Rust 1.97.1+):
+
+```sh
+git clone https://github.com/riccione/hermes-otp
+cd hermes-otp
+cargo build --release
+```
+
+## Quick Start
+
+```sh
+# Standard record: SHA-1, 6 digits, 30 second step (the defaults)
 hermes-otp add github -c JBSWY3DPEHPK3PXP
-```
 
-For services that specify different RFC 6238 parameters, pass them directly
-instead of building an `otpauth://` URI:
-
-```sh
+# Custom record: SHA-256, 8 digits, 60 second step
 hermes-otp add enterprise -c JBSWY3DPEHPK3PXP --algorithm sha256 --digits 8 --period 60
+
+# Import an otpauth:// URI (the URI carries its own parameters)
+hermes-otp add -c "otpauth://totp/ACME:alice?secret=JBSWY3DPEHPK3PXP&algorithm=SHA256&digits=8"
 ```
 
-| Flag | Default | Accepted values |
-|------|---------|-----------------|
-| `-a`, `--algorithm` | `sha1` | `sha1`, `sha256`, `sha512` |
-| `-d`, `--digits` | `6` | `6` to `8` |
-| `-t`, `--period` | `30` | `1` to `300` seconds |
+## Scripting & Automation
 
-Invalid values are rejected before anything is written:
+Hermes-OTP is designed not to break your scripts.
 
-```
-$ hermes-otp add enterprise -c JBSWY3DPEHPK3PXP --digits 5
-Error: Unsupported OTP parameter (digits=5). Only 6 to 8 digits are supported.
-```
-
-You can also pass an `otpauth://` URI to `-c`; in that case the URI's own
-parameters apply, and combining the URI with `--algorithm`, `--digits` or
-`--period` is an error.
-
-### Updating a record
+**A bare code:**
 
 ```sh
-hermes-otp update <ALIAS> -c <NEW_CODE>
+OTP=$(hermes-otp ls -q github)
+curl -H "X-OTP: $OTP" https://api.example.com
 ```
 
-Prompts for that record's current password and verifies it by decrypting the
-record before anything is written. If the password is wrong:
+**Structured data:**
 
-```
-Error: Incorrect password. Nothing was changed.
+```sh
+# A single alias returns one JSON object
+hermes-otp ls -q -f json github | jq -r .otp
+
+# Listing everything returns an array
+hermes-otp ls -q -f json | jq -r '.[].otp'
 ```
 
-The replacement is encrypted with the same password. `-u` stores it in plain
-text instead, but the record's password is still required to verify access.
+**Passwords in CI** — never hardcode them; use the environment variable:
+
+```yaml
+- run: echo "OTP=$(hermes-otp ls -q github)" >> "$GITHUB_OUTPUT"
+  env:
+    HERMES_OTP_PASSWORD: ${{ secrets.VAULT_PASSWORD }}
+```
 
 ### Exit codes
 
 | Code | Meaning |
-|------|---------|
-| `0` | Every matched record produced a code. |
-| `1` | Runtime error, or no record could produce a code (wrong password, corrupt secret, no match). |
-| `2` | Usage error (invalid flags or arguments). |
-| `3` | Partial: some records produced a code, some did not. |
+|---|---|
+| `0` | Success — every requested record produced a code. |
+| `1` | Total failure — wrong password, missing record, IO error. |
+| `2` | Usage error — a bad flag or argument. |
+| `3` | Partial success — some records produced a code, some did not. |
 
-Exit code `3` exists because records can have different passwords; see
-[Independent record encryption](#independent-record-encryption).
+Exit code `3` exists because records can have different passwords; the process
+tells you that the output is incomplete rather than silently giving you a
+half-empty result.
 
-### Pipeline Integration
+## Security
 
-Hermes-OTP is designed for scripting and automation. Use `--format json` for machine-readable output and `-q` to suppress interactive prompts.
+We believe in being honest about cryptography.
 
-**Generate OTP in a script:**
-```sh
-OTP=$(hermes-otp ls my_alias -q --format json | jq -r '.otp')
-curl -X POST https://api.example.com/auth -d "otp=$OTP"
-```
+- **Per-record encryption:** every record is encrypted on its own, so one
+  compromised password does not unlock the whole file.
+- **File permissions:** the codex is `0600`; the app's config directory is
+  `0700`.
+- **Update protection:** changing a record verifies its password *before*
+  anything is written, so a typo cannot re-key or corrupt the file.
+- **Passwords are never stored:** resolution order is `--password` →
+  `HERMES_OTP_PASSWORD` → interactive prompt.
 
-An alias that matches a single record prints one JSON object; listing all
-records, or an alias that matches several, prints an array:
+### Limitations to know
 
-```sh
-hermes-otp ls -f json my_alias | jq -r '.otp'     # one object
-hermes-otp ls -f json          | jq -r '.[].otp'  # array
-```
+- **Deterministic IV:** a fixed zero IV means identical secrets encrypt to
+  identical ciphertexts. Fine for local use, not for hostile multi-tenant
+  environments.
+- **No KDF:** the key is a direct SHA-256 hash of the password rather than a
+  memory-hard KDF such as Argon2. Use a strong, unique password.
 
-**Use with environment variables:**
-```sh
-export HERMES_OTP_PASSWORD="mysecret"
-export HERMES_OTP_PATH="/secure/codex.json"
-hermes-otp ls my_alias -q
-```
+<details>
+<summary>Command reference</summary>
 
-**Non-interactive mode (no progress bar):**
-```sh
-hermes-otp ls my_alias -q | grep -oE '[0-9]{6}'
-```
+### Commands
 
-### Automatically copy OTP code to clipboard
+| Command | Description |
+|---|---|
+| `add <ALIAS> -c <CODE>` | Add a record (Base32 secret or `otpauth://` URI). |
+| `add --otpauth <URI>` | Add from an `otpauth://` URI. |
+| `add --import <FILE>` | Batch import URIs, one per line. |
+| `update <ALIAS> -c <CODE>` | Replace a record's secret after verifying its password. |
+| `remove <ALIAS>` | Remove a record. |
+| `rename <OLD> <NEW>` | Rename an alias. |
+| `ls [ALIAS]` | List codes; a partial match filters, `--exact` is case-sensitive. |
+| `config` | Show the codex path. |
+| `export -o <FILE>` | Export records to a JSON file. |
+| `import <FILE>` | Import records from a JSON file. |
 
-**Wayland**
-```sh
-hermes-otp ls my_alias | wl-copy
-```
+### Flags
 
-**X11**
-```sh
-hermes-otp ls my_alias | xclip -selection clipboard
-```
+| Flag | Description |
+|---|---|
+| `-c, --code` | Base32 secret, or an `otpauth://` URI. |
+| `-a, --algorithm` | `sha1` (default), `sha256`, `sha512`. |
+| `-d, --digits` | 6–8 digits (default `6`). |
+| `-t, --period` | 1–300 seconds (default `30`). |
+| `-p, --path` | Custom path to the codex file. |
+| `-u, --unencrypt` | Store the secret in plain text (debugging only). |
+| `--password` | Password on the command line (leaks into shell history). |
+| `-q, --quiet` | Plain output for scripts: no countdown bar or prompt. |
+| `-e, --exact` | Exact, case-sensitive alias match for `ls`. |
+| `-z, --fuzzy` | Fuzzy search across aliases. |
+| `-f, --format` | `table` (default) or `json`. |
 
-**macOS**
-```sh
-hermes-otp ls my_alias | pbcopy
-```
+### Environment variables
 
-### Import from otpauth:// URI
+| Variable | Purpose |
+|---|---|
+| `HERMES_OTP_PASSWORD` | Password used to encrypt and decrypt secrets. |
+| `HERMES_OTP_PATH` | Path to the codex file. |
 
-Single URI:
-```sh
-hermes-otp add --otpauth "otpauth://totp/Example:alice@example.com?secret=JBSWY3DPEHPK3PXP&issuer=Example"
-```
+`--path` overrides `HERMES_OTP_PATH`; both override the default
+`~/.config/hermes-otp/codex`.
 
-Batch import from file (one URI per line):
-```sh
-hermes-otp add --import /path/to/uris.txt
-```
-
-Example file format:
-```
-otpauth://totp/GitHub:alice?secret=JBSWY3DPEHPK3PXP&issuer=GitHub
-otpauth://totp/Google:bob?secret=ONSWY3DPEHPK3PXP&issuer=Google
-```
-
-The RFC 6238 parameters are honored, not just the secret:
-
-| Parameter | Default | Accepted values |
-|-----------|---------|-----------------|
-| `secret` | *(required)* | Base32 |
-| `issuer` | none | any string |
-| `algorithm` | `sha1` | `sha1`, `sha256`, `sha512` (case-insensitive) |
-| `digits` | `6` | `6` to `8` |
-| `period` | `30` | `1` to `300` seconds |
-
-Invalid values are rejected at import instead of silently producing wrong
-codes:
-
-```
-$ hermes-otp add --otpauth "otpauth://totp/App:user?secret=JBSWY3DPEHPK3PXP&digits=9"
-Error: Unsupported OTP parameter (digits=9). Only 6 to 8 digits are supported.
-```
+### Copy a code to the clipboard
 
 ```sh
-hermes-otp add --otpauth \
-  "otpauth://totp/Ent:alice?secret=JBSWY3DPEHPK3PXP&issuer=Ent&algorithm=SHA256&digits=8&period=60"
+# Wayland
+hermes-otp ls -q github | wl-copy
+
+# X11
+hermes-otp ls -q github | xclip -selection clipboard
+
+# macOS
+hermes-otp ls -q github | pbcopy
 ```
 
-### Export and Import
+### Import and export
 
-Export all records to a JSON backup file:
 ```sh
+# Single URI
+hermes-otp add --otpauth "otpauth://totp/Example:alice?secret=JBSWY3DPEHPK3PXP&issuer=Example"
+
+# Batch: one URI per line, blank lines ignored, all-or-nothing
+hermes-otp add --import uris.txt
+
+# JSON backup and restore
 hermes-otp export -o backup.json
-```
-
-Import records from a JSON file:
-```sh
 hermes-otp import backup.json
 ```
 
-The JSON format is a standard array of record objects:
+The JSON format is an array of records:
+
 ```json
 [
   {
@@ -300,84 +270,21 @@ The JSON format is a standard array of record objects:
 ]
 ```
 
-<p align="right">(<a href="#readme-top">back to top</a>)</p>
+`export` writes the secret exactly as stored, so ciphertext stays ciphertext: a
+backup is only restorable with the same password.
 
-<!-- SECURITY -->
-## Security
+</details>
 
-### Independent record encryption
+## Development
 
-There is no vault key. Each record's secret is encrypted on its own, using the
-password supplied when that record was created. Different records can use
-different passwords: your `github` record can use one password and your `aws`
-record another.
+```sh
+cargo build --release
+cargo test
+cargo clippy --workspace --all-targets --all-features -- -D warnings
+```
 
-The upside is blast radius: if one record's password is compromised, the other
-records remain secure. `update` proves access by decrypting that one record
-before replacing it — it cannot verify a password against the whole file.
+Contributions are welcome — open an issue or a pull request.
 
-The trade-off is that `ls` can only decrypt the records whose password you give
-it. Records encrypted with a different password are reported as failures, and
-the command exits `3` when some decrypted and some did not.
-
-### File permissions
-
-On Unix the codex is kept owner-only: the file is `0600` (`-rw-------`), and the
-app's own config directory is `0700` (`drwx------`). The same applies to the
-`codex.bak` backup and to files written by `export`. Existing files with looser
-permissions are repaired on the next write.
-
-A directory you pass with `--path` is never re-permissioned, since it may be a
-shared location such as `/tmp` or your home directory — only the codex file
-itself is restricted there.
-
-<p align="right">(<a href="#readme-top">back to top</a>)</p>
-
-<!-- Testing -->
-## Testing
-
-`cargo test`
-
-### TOTP verification
-- [https://authenticationtest.com/totpChallenge/](https://authenticationtest.com/totpChallenge/)
-- [https://www.verifyr.com/en/otp/check#totp](https://www.verifyr.com/en/otp/check#totp)
-- [https://totp.danhersam.com/](https://totp.danhersam.com/)
-
-<!-- CONTRIBUTING -->
-## Contributing
-
-If you have a suggestion that would make this better, please fork the repo and
-create a pull request. You can also simply open an issue with the tag
-"enhancement".  Don't forget to give the project a star! Thanks again!
-
-1. Fork the Project
-2. Create your Feature Branch (`git checkout -b feature/AmazingFeature`)
-3. Commit your Changes (`git commit -m 'Add some AmazingFeature'`)
-4. Push to the Branch (`git push origin feature/AmazingFeature`)
-5. Open a Pull Request
-
-<p align="right">(<a href="#readme-top">back to top</a>)</p>
-
-<!-- LICENSE -->
 ## License
 
-Distributed under the MIT License. See `LICENSE` for more information.
-
-<p align="right">(<a href="#readme-top">back to top</a>)</p>
-
-<!-- CONTACT -->
-## Contact
-
-Just create an issue if you need something.
-
-Project Link: [https://github.com/riccione/hermes-otp](https://github.com/riccione/hermes-otp)
-
-<p align="right">(<a href="#readme-top">back to top</a>)</p>
-
-<!-- ACKNOWLEDGMENTS -->
-## Acknowledgments
-
-* [Choose an Open Source License](https://choosealicense.com)
-* [Rust](https://www.rust-lang.org/)
-
-<p align="right">(<a href="#readme-top">back to top</a>)</p>
+MIT — see [LICENSE](LICENSE).

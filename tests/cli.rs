@@ -647,12 +647,156 @@ fn update_wrong_password_leaves_record_intact() -> Result<(), Box<dyn std::error
         .assert()
         .failure()
         .code(1)
+        .stderr(predicate::str::contains("Incorrect password"))
         .stderr(predicate::str::contains("Nothing was changed"));
 
     // the original password still works
     hermes(path)
         .arg("ls")
         .args(["github", "-q", "--password", PASSWORD])
+        .assert()
+        .success()
+        .stdout(predicate::str::is_match("^[0-9]{6}")?);
+
+    Ok(())
+}
+
+#[test]
+fn update_u_verifies_before_converting_to_plaintext() -> Result<(), Box<dyn std::error::Error>> {
+    let file = NamedTempFile::new()?;
+    let path = file.path();
+
+    hermes(path)
+        .arg("add")
+        .args(["github", "-c", CODE, "--password", PASSWORD])
+        .assert()
+        .success();
+
+    // -u must not let anyone overwrite an encrypted record without the password
+    hermes(path)
+        .arg("update")
+        .args(["github", "-c", CODE, "-u", "--password", "wrong-password"])
+        .assert()
+        .failure()
+        .code(1)
+        .stderr(predicate::str::contains("Incorrect password"));
+
+    // the record is still encrypted with the original password
+    hermes(path)
+        .arg("ls")
+        .args(["github", "-q", "--password", PASSWORD])
+        .assert()
+        .success()
+        .stdout(predicate::str::is_match("^[0-9]{6}")?);
+
+    // with the right password, -u converts the record to plaintext
+    hermes(path)
+        .arg("update")
+        .args(["github", "-c", CODE, "-u", "--password", PASSWORD])
+        .assert()
+        .success();
+
+    hermes(path)
+        .arg("ls")
+        .args(["github", "-q"])
+        .assert()
+        .success()
+        .stdout(predicate::str::is_match("^[0-9]{6}")?);
+
+    Ok(())
+}
+
+#[test]
+fn update_reencrypts_with_same_password() -> Result<(), Box<dyn std::error::Error>> {
+    let file = NamedTempFile::new()?;
+    let path = file.path();
+
+    hermes(path)
+        .arg("add")
+        .args(["github", "-c", CODE, "--password", PASSWORD])
+        .assert()
+        .success();
+
+    hermes(path)
+        .arg("update")
+        .args(["github", "-c", "GEZDGNBVGY3TQOJQ", "--password", PASSWORD])
+        .assert()
+        .success();
+
+    // the replacement is encrypted with the same password
+    hermes(path)
+        .arg("ls")
+        .args(["github", "-q", "--password", PASSWORD])
+        .assert()
+        .success()
+        .stdout(predicate::str::is_match("^[0-9]{6}")?);
+
+    Ok(())
+}
+
+#[test]
+fn update_leaves_other_records_untouched() -> Result<(), Box<dyn std::error::Error>> {
+    let file = NamedTempFile::new()?;
+    let path = file.path();
+
+    // each record has its own password
+    hermes(path)
+        .arg("add")
+        .args(["github", "-c", CODE, "--password", "pw-github"])
+        .assert()
+        .success();
+
+    hermes(path)
+        .arg("add")
+        .args(["aws", "-c", CODE, "--password", "pw-aws"])
+        .assert()
+        .success();
+
+    hermes(path)
+        .arg("update")
+        .args([
+            "github",
+            "-c",
+            "GEZDGNBVGY3TQOJQ",
+            "--password",
+            "pw-github",
+        ])
+        .assert()
+        .success();
+
+    // the untouched record still opens with its own password
+    hermes(path)
+        .arg("ls")
+        .args(["aws", "-q", "--password", "pw-aws"])
+        .assert()
+        .success()
+        .stdout(predicate::str::is_match("^[0-9]{6}")?);
+
+    Ok(())
+}
+
+#[test]
+fn add_accepts_a_different_password_per_record() -> Result<(), Box<dyn std::error::Error>> {
+    let file = NamedTempFile::new()?;
+    let path = file.path();
+
+    hermes(path)
+        .arg("add")
+        .args(["github", "-c", CODE, "--password", "pw-github"])
+        .assert()
+        .success();
+
+    // a second record with a different password must be accepted: there is no
+    // vault-wide password to verify against
+    hermes(path)
+        .arg("add")
+        .args(["aws", "-c", CODE, "--password", "pw-aws"])
+        .assert()
+        .success();
+
+    hermes(path)
+        .arg("ls")
+        .args(["aws", "-q", "--password", "pw-aws"])
         .assert()
         .success()
         .stdout(predicate::str::is_match("^[0-9]{6}")?);

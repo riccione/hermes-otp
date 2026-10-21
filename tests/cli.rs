@@ -1022,3 +1022,103 @@ mod unix_permissions {
         Ok(())
     }
 }
+
+#[test]
+fn import_honors_sha256_8_digits_60s() -> Result<(), Box<dyn std::error::Error>> {
+    let file = NamedTempFile::new()?;
+    let path = file.path();
+
+    hermes(path)
+        .arg("add")
+        .arg("--otpauth")
+        .arg(
+            "otpauth://totp/Enterprise:alice?secret=JBSWY3DPEHPK3PXP&issuer=Enterprise\
+             &algorithm=SHA256&digits=8&period=60",
+        )
+        .arg("-u")
+        .assert()
+        .success();
+
+    let output = hermes(path)
+        .arg("ls")
+        .args(["Enterprise:alice", "--format", "json"])
+        .output()?;
+
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout)?;
+
+    assert!(json.is_object(), "single alias must be a JSON object");
+    assert_eq!(json["alias"], "Enterprise:alice");
+
+    // digits=8 must be honored, not hardcoded to 6
+    let otp = json["otp"].as_str().expect("otp is a string");
+    assert_eq!(otp.len(), 8, "expected an 8 digit code, got {otp}");
+
+    // period=60 must be honored, not hardcoded to 30
+    let remaining = json["remaining_secs"].as_u64().expect("remaining_secs");
+    assert!(
+        (1..=60).contains(&remaining),
+        "remaining_secs should be within the 60s period, got {remaining}"
+    );
+
+    Ok(())
+}
+
+#[test]
+fn import_rejects_invalid_digits() -> Result<(), Box<dyn std::error::Error>> {
+    let file = NamedTempFile::new()?;
+    let path = file.path();
+
+    hermes(path)
+        .arg("add")
+        .arg("--otpauth")
+        .arg("otpauth://totp/App:user?secret=JBSWY3DPEHPK3PXP&digits=9")
+        .arg("-u")
+        .assert()
+        .failure()
+        .code(1)
+        .stderr(predicate::str::contains("Unsupported OTP parameter"))
+        .stderr(predicate::str::contains("digits=9"))
+        .stderr(predicate::str::contains("Only 6 to 8 digits"));
+
+    Ok(())
+}
+
+#[test]
+fn import_rejects_invalid_period() -> Result<(), Box<dyn std::error::Error>> {
+    let file = NamedTempFile::new()?;
+    let path = file.path();
+
+    hermes(path)
+        .arg("add")
+        .arg("--otpauth")
+        .arg("otpauth://totp/App:user?secret=JBSWY3DPEHPK3PXP&period=0")
+        .arg("-u")
+        .assert()
+        .failure()
+        .code(1)
+        .stderr(predicate::str::contains("period=0"))
+        .stderr(predicate::str::contains("between 1 and 300 seconds"));
+
+    Ok(())
+}
+
+#[test]
+fn import_rejects_invalid_algorithm() -> Result<(), Box<dyn std::error::Error>> {
+    let file = NamedTempFile::new()?;
+    let path = file.path();
+
+    hermes(path)
+        .arg("add")
+        .arg("--otpauth")
+        .arg("otpauth://totp/App:user?secret=JBSWY3DPEHPK3PXP&algorithm=md5")
+        .arg("-u")
+        .assert()
+        .failure()
+        .code(1)
+        .stderr(predicate::str::contains("algorithm=md5"))
+        .stderr(predicate::str::contains(
+            "Only sha1, sha256 and sha512 are supported",
+        ));
+
+    Ok(())
+}

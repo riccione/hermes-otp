@@ -16,5 +16,5 @@ jobs:
     permissions:
       contents: write
     with:
-      bin_name: "hermes-otp"
+      bin_names: "hermes-otp"
       tag: ${{ github.ref_name }}

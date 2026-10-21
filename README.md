@@ -95,6 +95,7 @@ There are 2 env variables:
 Commands:
 
 * `add <ALIAS> -c <CODE> [OPTIONS]`: Add new record.
+* `add -c <OTPAUTH_URI> [OPTIONS]`: Add from an otpauth:// URI (no alias needed).
 * `add --otpauth <OTPAUTH_URI> [OPTIONS]`: Import from otpauth:// URI.
 * `add --import <FILE> [OPTIONS]`: Batch import from file (one URI per line).
 * `remove <ALIAS> [OPTIONS]`: Remove record.
@@ -110,8 +111,10 @@ Commands:
 
 Flags:
 
-* `-a`, `--alias`: Alias.
-* `-c`, `--code`: Code aka Secret.
+* `-c`, `--code`: Base32 secret, or an `otpauth://` URI.
+* `-a`, `--algorithm`: Hash algorithm for `add`: `sha1` (default), `sha256`, `sha512`.
+* `-d`, `--digits`: Number of digits for `add`: 6 to 8 (default `6`).
+* `-t`, `--period`: Time step in seconds for `add`: 1 to 300 (default `30`).
 * `-p`, `--path`: Custom path to the codex file.
 * `-u`, `--unencrypt`: WARNING: Store the secret in plain text. Use for debugging only.
 * `--password`: WARNING: Using this flag leaves password in shell history.
@@ -121,6 +124,38 @@ Flags:
 * `-f [table, json]`, `--format [table, json]`: Only for `ls` command. Format output as table (default) or as JSON.
 * `--otpauth <URI>`: Import from otpauth:// URI.
 * `--import <FILE>`: Import multiple URIs from a file.
+
+### Adding a record with custom OTP parameters
+
+Most services use SHA-1, 6 digits and a 30 second step, which is the default:
+
+```sh
+hermes-otp add github -c JBSWY3DPEHPK3PXP
+```
+
+For services that specify different RFC 6238 parameters, pass them directly
+instead of building an `otpauth://` URI:
+
+```sh
+hermes-otp add enterprise -c JBSWY3DPEHPK3PXP --algorithm sha256 --digits 8 --period 60
+```
+
+| Flag | Default | Accepted values |
+|------|---------|-----------------|
+| `-a`, `--algorithm` | `sha1` | `sha1`, `sha256`, `sha512` |
+| `-d`, `--digits` | `6` | `6` to `8` |
+| `-t`, `--period` | `30` | `1` to `300` seconds |
+
+Invalid values are rejected before anything is written:
+
+```
+$ hermes-otp add enterprise -c JBSWY3DPEHPK3PXP --digits 5
+Error: Unsupported OTP parameter (digits=5). Only 6 to 8 digits are supported.
+```
+
+You can also pass an `otpauth://` URI to `-c`; in that case the URI's own
+parameters apply, and combining the URI with `--algorithm`, `--digits` or
+`--period` is an error.
 
 ### Updating a record
 

@@ -65,6 +65,10 @@ stateless and does not manage a vault of secrets.*
 
 ## Install
 
+For Linux, we provide two builds:
+* **`linux-musl-x86_64` (Recommended):** Fully static. Runs on any distro (Ubuntu, Alpine, CentOS, Docker) with zero dependencies.
+* **`linux-x86_64`:** Dynamically linked against `glibc`. Best for standard desktop Linux environments.
+
 **Linux (x86_64):**
 
 ```sh

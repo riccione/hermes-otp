@@ -2,6 +2,7 @@ use std::path::PathBuf;
 
 mod args;
 mod cmd;
+mod error;
 mod file;
 mod models;
 mod otp;
@@ -10,14 +11,19 @@ mod ui;
 
 use args::{Cli, Commands};
 use clap::Parser;
+use error::EXIT_PARTIAL;
 
 fn main() {
     let cli = Cli::parse();
     let codex_path = resolve_codex_path(&cli);
 
     if let Err(e) = run(cli.command, codex_path) {
-        eprintln!("Error: {e}");
-        std::process::exit(1);
+        if e.exit_code == EXIT_PARTIAL {
+            eprintln!("Warning: {}", e.message);
+        } else {
+            eprintln!("Error: {}", e.message);
+        }
+        std::process::exit(e.exit_code);
     }
 }
 
@@ -31,7 +37,7 @@ fn resolve_codex_path(cli: &Cli) -> PathBuf {
         .unwrap_or_else(file::get_default_path)
 }
 
-fn run(command: Commands, codex_path: PathBuf) -> Result<(), String> {
+fn run(command: Commands, codex_path: PathBuf) -> Result<(), error::AppError> {
     match command {
         Commands::Add {
             alias,

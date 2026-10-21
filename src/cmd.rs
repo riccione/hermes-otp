@@ -1,4 +1,5 @@
 use crate::args::OutputFormat;
+use crate::error::AppError;
 use crate::file;
 use crate::models::Record;
 use crate::otp;
@@ -7,6 +8,10 @@ use crate::ui::Table;
 use data_encoding::BASE32_NOPAD;
 use nucleo_matcher::{Config, Utf32Str};
 use std::path::Path;
+
+// Shown in place of the code when a record cannot be decrypted or the secret
+// is not valid base32.
+const OTP_ERROR_TEXT: &str = "Error Invalid secret or decryption failed";
 
 fn sanitize_and_validate_code(code: &str) -> Result<String, String> {
     let clean = code.to_uppercase().replace("=", "");
@@ -163,7 +168,7 @@ pub fn ls(
     quiet: bool,
     exact_match: bool,
     fuzzy: bool,
-) -> Result<(), String> {
+) -> Result<(), AppError> {
     let records = file::read_codex(path)?;
 
     // apply search filter
@@ -210,7 +215,8 @@ pub fn ls(
             }
         } else {
             "No records found".into()
-        });
+        }
+        .into());
     }
 
     let needs_password = !is_unencrypt && filtered.iter().any(|r| !r.is_unencrypted);
@@ -233,19 +239,48 @@ pub fn ls(
         }
     }
 
+    // A record that could not produce a code is a failure, even though the
+    // output was already rendered. Report it so scripts can react.
+    let failed: Vec<&str> = filtered
+        .iter()
+        .filter(|r| get_otp_display(r, &pass).is_err())
+        .map(|r| r.alias.as_str())
+        .collect();
+
+    if !failed.is_empty() {
+        let aliases = failed.join(", ");
+        let total = filtered.len();
+
+        return if failed.len() == total {
+            Err(AppError::from(format!(
+                "could not produce a code for {failed_len} record(s) \
+                 (wrong password or corrupt secret): {aliases}",
+                failed_len = failed.len()
+            )))
+        } else {
+            Err(AppError::partial(format!(
+                "{failed_len} of {total} records failed (wrong password or corrupt secret): {aliases}",
+                failed_len = failed.len()
+            )))
+        };
+    }
+
     Ok(())
 }
 
-fn get_otp_display(record: &Record, pass: &str) -> String {
+fn get_otp_display(record: &Record, pass: &str) -> Result<String, otp::OtpError> {
     let secret = if record.is_unencrypted {
         Ok(record.secret.clone())
     } else {
         otp::decrypt(&record.secret, pass)
     };
 
-    secret
-        .and_then(|s| otp::generate_otp(&s).map_err(|_| otp::OtpError::InvalidBase32))
-        .unwrap_or_else(|_| "Error Invalid secret or decryption failed".to_string())
+    secret.and_then(|s| otp::generate_otp(&s))
+}
+
+/// Renders the OTP cell of a record, falling back to an error marker.
+fn otp_cell(record: &Record, pass: &str) -> String {
+    get_otp_display(record, pass).unwrap_or_else(|_| OTP_ERROR_TEXT.to_string())
 }
 
 pub fn print_table(records: &[&Record], pass: &str, rem: u64, is_single_alias: bool, quiet: bool) {
@@ -259,7 +294,7 @@ pub fn print_table(records: &[&Record], pass: &str, rem: u64, is_single_alias: b
         bar = format!("[{0}{1}]", "#".repeat(filled), ".".repeat(empty));
     }
     if is_single_alias && records.len() == 1 {
-        let otp = get_otp_display(records[0], pass);
+        let otp = otp_cell(records[0], pass);
         if !quiet {
             eprintln!("{0} {1: <3} remaining", bar, rem.to_string() + "s");
         }
@@ -268,7 +303,7 @@ pub fn print_table(records: &[&Record], pass: &str, rem: u64, is_single_alias: b
         println!("{0: <15} | {1: <10} | {2: <4}", "Alias", "OTP", "Rem");
         println!("{:-<15}-|-{:-<10}-|-{:-<4}", "", "", "");
         for r in records {
-            let otp = get_otp_display(r, pass);
+            let otp = otp_cell(r, pass);
             println!(
                 "{0: <15} | {1: <10} | {2: <3} {3}",
                 r.alias,
@@ -284,13 +319,25 @@ fn print_json(records: &[&Record], pass: &str, rem: u64) {
     let list: Vec<serde_json::Value> = records
         .iter()
         .map(|r| {
-            serde_json::json!({
+            let (otp, error) = match get_otp_display(r, pass) {
+                Ok(otp) => (otp, None),
+                Err(e) => (OTP_ERROR_TEXT.to_string(), Some(e.as_str())),
+            };
+
+            let mut entry = serde_json::json!({
                 "alias": r.alias,
-                "otp": get_otp_display(r, pass),
+                "otp": otp,
                 "remaining_secs": rem,
                 "is_encrypted": !r.is_unencrypted,
                 "created_at": r.created_at
-            })
+            });
+
+            // only present on failures, so successful entries stay unchanged
+            if let Some(message) = error {
+                entry["error"] = serde_json::Value::String(message.to_string());
+            }
+
+            entry
         })
         .collect();
     println!("{}", serde_json::to_string_pretty(&list).unwrap());

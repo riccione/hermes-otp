@@ -9,6 +9,16 @@ pub enum OtpError {
     SystemTimeError,
 }
 
+impl OtpError {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            OtpError::DecryptionFailed => "decryption failed",
+            OtpError::InvalidBase32 => "invalid base32 secret",
+            OtpError::SystemTimeError => "system time error",
+        }
+    }
+}
+
 // helper fn to get UNIX timestamp
 fn get_current_timestamp() -> Result<u64, OtpError> {
     SystemTime::now()

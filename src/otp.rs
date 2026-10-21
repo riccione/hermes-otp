@@ -6,6 +6,8 @@ use totp_lite::{Sha1, Sha256, Sha512, totp_custom};
 /// Digit counts accepted by the RFC 4226 / 6238 implementations in the wild.
 const MIN_DIGITS: u32 = 6;
 const MAX_DIGITS: u32 = 8;
+/// Longest accepted time step, in seconds.
+const MAX_PERIOD: u32 = 300;
 
 #[derive(Debug)]
 pub enum OtpError {
@@ -46,6 +48,36 @@ pub fn get_remaining_seconds(period: u64) -> u64 {
 
     let now = get_current_timestamp().unwrap_or(0);
     period - (now % period)
+}
+
+/// Validates the parameters accepted by [`generate_otp`], returning a message
+/// suitable for the user when they are out of range.
+pub fn validate_params(algorithm: &str, digits: u32, period: u32) -> Result<(), String> {
+    if !matches!(
+        algorithm.to_lowercase().as_str(),
+        "sha1" | "sha256" | "sha512"
+    ) {
+        return Err(format!(
+            "Unsupported OTP parameter (algorithm={algorithm}). \
+             Only sha1, sha256 and sha512 are supported."
+        ));
+    }
+
+    if !(MIN_DIGITS..=MAX_DIGITS).contains(&digits) {
+        return Err(format!(
+            "Unsupported OTP parameter (digits={digits}). \
+             Only {MIN_DIGITS} to {MAX_DIGITS} digits are supported."
+        ));
+    }
+
+    if !(1..=MAX_PERIOD).contains(&period) {
+        return Err(format!(
+            "Unsupported OTP parameter (period={period}). \
+             Period must be between 1 and {MAX_PERIOD} seconds."
+        ));
+    }
+
+    Ok(())
 }
 
 /// Generates a code for `secret` using the given parameters, at the current
@@ -230,5 +262,47 @@ mod tests {
         }
 
         assert_eq!(get_remaining_seconds(0), 0);
+    }
+
+    #[test]
+    fn validate_params_accepts_supported_values() {
+        for algorithm in ["sha1", "sha256", "sha512", "SHA256"] {
+            assert!(validate_params(algorithm, 6, 30).is_ok(), "{algorithm}");
+        }
+
+        for digits in MIN_DIGITS..=MAX_DIGITS {
+            assert!(
+                validate_params("sha1", digits, 30).is_ok(),
+                "digits={digits}"
+            );
+        }
+
+        for period in [1, 30, 300] {
+            assert!(
+                validate_params("sha1", 6, period).is_ok(),
+                "period={period}"
+            );
+        }
+    }
+
+    #[test]
+    fn validate_params_rejects_out_of_range_values() {
+        let err = validate_params("sha1", 5, 30).unwrap_err();
+        assert!(err.contains("digits=5"), "{err}");
+        assert!(err.contains("Only 6 to 8 digits"), "{err}");
+
+        let err = validate_params("sha1", 9, 30).unwrap_err();
+        assert!(err.contains("digits=9"), "{err}");
+
+        let err = validate_params("sha1", 6, 0).unwrap_err();
+        assert!(err.contains("period=0"), "{err}");
+        assert!(err.contains("between 1 and 300 seconds"), "{err}");
+
+        let err = validate_params("sha1", 6, 301).unwrap_err();
+        assert!(err.contains("period=301"), "{err}");
+
+        let err = validate_params("md5", 6, 30).unwrap_err();
+        assert!(err.contains("algorithm=md5"), "{err}");
+        assert!(err.contains("Only sha1, sha256 and sha512"), "{err}");
     }
 }

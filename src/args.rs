@@ -18,6 +18,24 @@ pub enum OutputFormat {
     Json,
 }
 
+#[derive(ValueEnum, Clone, Copy, Debug, Default)]
+pub enum Algorithm {
+    #[default]
+    Sha1,
+    Sha256,
+    Sha512,
+}
+
+impl Algorithm {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Algorithm::Sha1 => "sha1",
+            Algorithm::Sha256 => "sha256",
+            Algorithm::Sha512 => "sha512",
+        }
+    }
+}
+
 #[derive(clap::Args)]
 pub struct EncryptArgs {
     /// WARNING: Store the secret in plain text. Use for debugging only.
@@ -45,9 +63,18 @@ pub enum Commands {
     Add {
         /// Alias for the entry (required unless using --otpauth or --import)
         alias: Option<String>,
-        /// Secret code (required unless using --otpauth or --import)
+        /// Secret code or otpauth:// URI (required unless using --otpauth or --import)
         #[clap(short = 'c', long)]
         code: Option<String>,
+        /// Hash algorithm [default: sha1]
+        #[arg(short = 'a', long, value_enum, conflicts_with_all = ["otpauth", "import"])]
+        algorithm: Option<Algorithm>,
+        /// Number of digits in the generated code [default: 6]
+        #[arg(short = 'd', long, conflicts_with_all = ["otpauth", "import"])]
+        digits: Option<u32>,
+        /// Time step in seconds [default: 30]
+        #[arg(short = 't', long, conflicts_with_all = ["otpauth", "import"])]
+        period: Option<u32>,
         /// Import from otpauth:// URI
         #[clap(long, conflicts_with_all = ["code", "alias"])]
         otpauth: Option<String>,

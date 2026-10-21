@@ -62,14 +62,21 @@ fn get_effective_password(password: &Option<String>) -> Result<String, String> {
 * data-encoding - different results.
 * I stick for now with data-encoding only because it more popular.
 */
+#[allow(clippy::too_many_arguments)]
 pub fn add(
     path: &Path,
     alias: &str,
     code: &str,
+    algorithm: &str,
+    digits: u32,
+    period: u32,
     is_unencrypt: &bool,
     password: &Option<String>,
 ) -> Result<(), String> {
     let clean_code = sanitize_and_validate_code(code)?;
+
+    // reject parameters the generator could not honor
+    otp::validate_params(algorithm, digits, period)?;
 
     if file::file_exists(path) && file::alias_exists(alias, path) {
         return Err(format!("Error: Alias '{alias}' already exists."));
@@ -83,7 +90,14 @@ pub fn add(
     };
 
     // serialize and save
-    let record = Record::new(alias.to_string(), secret.to_string(), *is_unencrypt);
+    let record = Record::new(
+        alias.to_string(),
+        secret.to_string(),
+        *is_unencrypt,
+        algorithm.to_string(),
+        digits as u8,
+        period,
+    );
     let json_data = serde_json::to_string(&record).map_err(|e| e.to_string())?;
 
     file::ensure_dir_exists(path).map_err(|e| e.to_string())?;
@@ -144,9 +158,18 @@ pub fn update_code(
             .map_err(|_| "Incorrect password. Nothing was changed.".to_string())?;
     }
 
-    // Do the swap
+    // Do the swap, keeping the record's OTP parameters.
     remove(path, alias)?;
-    add(path, alias, &clean_code, is_unencrypt, &pass)?;
+    add(
+        path,
+        alias,
+        &clean_code,
+        &existing.algorithm,
+        existing.digits as u32,
+        existing.period,
+        is_unencrypt,
+        &pass,
+    )?;
     println!("Record for '{alias}' successfully updated.");
     Ok(())
 }

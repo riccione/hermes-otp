@@ -42,10 +42,16 @@ fn run(command: Commands, codex_path: PathBuf) -> Result<(), error::AppError> {
         Commands::Add {
             alias,
             code,
+            algorithm,
+            digits,
+            period,
             otpauth: otpauth_uri,
             import: import_file,
             encryption,
         } => {
+            // Defaults are applied below so we can tell when the user set them.
+            let custom_params = algorithm.is_some() || digits.is_some() || period.is_some();
+
             if let Some(uri) = otpauth_uri {
                 cmd::add_from_otpauth(
                     &codex_path,
@@ -60,13 +66,37 @@ fn run(command: Commands, codex_path: PathBuf) -> Result<(), error::AppError> {
                     &encryption.unencrypt,
                     &encryption.password,
                 )?;
+            } else if let Some(uri) = code.as_deref().filter(|c| c.starts_with("otpauth://")) {
+                // A URI passed via -c already carries its own parameters.
+                if custom_params {
+                    return Err("cannot combine --algorithm/--digits/--period \
+                                with an otpauth:// URI. Nothing was changed."
+                        .into());
+                }
+
+                if alias.is_some() {
+                    return Err("an otpauth:// URI already contains the alias; \
+                                do not pass ALIAS as well. Nothing was changed."
+                        .into());
+                }
+
+                cmd::add_from_otpauth(
+                    &codex_path,
+                    uri,
+                    &encryption.unencrypt,
+                    &encryption.password,
+                )?;
             } else {
                 let alias = alias.ok_or("Error: alias is required")?;
                 let code = code.ok_or("Error: code is required")?;
+
                 cmd::add(
                     &codex_path,
                     &alias,
                     &code,
+                    algorithm.unwrap_or_default().as_str(),
+                    digits.unwrap_or(6),
+                    period.unwrap_or(30),
                     &encryption.unencrypt,
                     &encryption.password,
                 )?;

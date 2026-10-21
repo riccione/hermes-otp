@@ -24,7 +24,14 @@ pub struct Record {
 }
 
 impl Record {
-    pub fn new(alias: String, secret: String, is_unencrypted: bool) -> Self {
+    pub fn new(
+        alias: String,
+        secret: String,
+        is_unencrypted: bool,
+        algorithm: String,
+        digits: u8,
+        period: u32,
+    ) -> Self {
         let start = SystemTime::now();
         let since_the_epoch = start
             .duration_since(UNIX_EPOCH)
@@ -35,9 +42,9 @@ impl Record {
             alias,
             secret,
             is_unencrypted,
-            algorithm: "sha1".to_string(),
-            digits: default_digits(),
-            period: default_period(),
+            algorithm,
+            digits,
+            period,
             created_at: since_the_epoch,
         }
     }

@@ -520,3 +520,142 @@ fn import_rejects_invalid_json() -> Result<(), Box<dyn std::error::Error>> {
 
     Ok(())
 }
+
+#[test]
+fn ls_wrong_password_exits_with_error() -> Result<(), Box<dyn std::error::Error>> {
+    let file = NamedTempFile::new()?;
+    let path = file.path();
+
+    hermes(path)
+        .arg("add")
+        .args(["github", "-c", CODE, "--password", PASSWORD])
+        .assert()
+        .success();
+
+    // wrong password: the code cannot be produced, so this must not exit 0
+    hermes(path)
+        .arg("ls")
+        .args(["github", "-q", "--password", "wrong-password"])
+        .assert()
+        .failure()
+        .code(1)
+        .stderr(predicate::str::contains("could not produce a code"))
+        .stderr(predicate::str::contains("github"));
+
+    Ok(())
+}
+
+#[test]
+fn ls_partial_failure_exits_with_partial_code() -> Result<(), Box<dyn std::error::Error>> {
+    let file = NamedTempFile::new()?;
+    let path = file.path();
+
+    // one working plaintext record
+    hermes(path)
+        .arg("add")
+        .args(["good", "-c", CODE, "--password", PASSWORD, "-u"])
+        .assert()
+        .success();
+
+    // one record whose secret is not valid base32
+    let mut content = std::fs::read_to_string(path)?;
+    content.push_str(
+        r#"{"alias":"corrupt","secret":"NOT!BASE32","is_unencrypted":true,"algorithm":"sha1","digits":6,"period":30,"created_at":1}"#,
+    );
+    std::fs::write(path, content)?;
+
+    // some records worked, some did not -> partial exit code
+    hermes(path)
+        .arg("ls")
+        .args(["-q", "--password", PASSWORD])
+        .assert()
+        .failure()
+        .code(3)
+        .stderr(predicate::str::contains("1 of 2 records failed"))
+        .stderr(predicate::str::contains("corrupt"));
+
+    Ok(())
+}
+
+#[test]
+fn ls_json_reports_error_field() -> Result<(), Box<dyn std::error::Error>> {
+    let file = NamedTempFile::new()?;
+    let path = file.path();
+
+    hermes(path)
+        .arg("add")
+        .args(["github", "-c", CODE, "--password", PASSWORD])
+        .assert()
+        .success();
+
+    let output = hermes(path)
+        .arg("ls")
+        .args(["--password", "wrong-password", "--format", "json"])
+        .output()?;
+
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout)?;
+    let entry = &json.as_array().unwrap()[0];
+
+    // the failure is reported in a dedicated field
+    assert_eq!(entry["error"], "decryption failed");
+    // and the otp field still carries a visible marker
+    assert!(entry["otp"].as_str().unwrap().contains("decryption failed"));
+
+    Ok(())
+}
+
+#[test]
+fn ls_json_omits_error_field_on_success() -> Result<(), Box<dyn std::error::Error>> {
+    let file = NamedTempFile::new()?;
+    let path = file.path();
+
+    hermes(path)
+        .arg("add")
+        .args(["github", "-c", CODE, "--password", PASSWORD, "-u"])
+        .assert()
+        .success();
+
+    let output = hermes(path)
+        .arg("ls")
+        .args(["--password", PASSWORD, "--format", "json"])
+        .output()?;
+
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout)?;
+    let entry = &json.as_array().unwrap()[0];
+
+    // successful entries stay unchanged
+    assert!(entry.get("error").is_none());
+
+    Ok(())
+}
+
+#[test]
+fn update_wrong_password_leaves_record_intact() -> Result<(), Box<dyn std::error::Error>> {
+    let file = NamedTempFile::new()?;
+    let path = file.path();
+
+    hermes(path)
+        .arg("add")
+        .args(["github", "-c", CODE, "--password", PASSWORD])
+        .assert()
+        .success();
+
+    // updating with a wrong password must not replace the secret
+    hermes(path)
+        .arg("update")
+        .args(["github", "-c", CODE, "--password", "wrong-password"])
+        .assert()
+        .failure()
+        .code(1)
+        .stderr(predicate::str::contains("Nothing was changed"));
+
+    // the original password still works
+    hermes(path)
+        .arg("ls")
+        .args(["github", "-q", "--password", PASSWORD])
+        .assert()
+        .success()
+        .stdout(predicate::str::is_match("^[0-9]{6}")?);
+
+    Ok(())
+}

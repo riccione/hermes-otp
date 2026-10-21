@@ -243,7 +243,7 @@ pub fn ls(
 
     let rem = otp::get_remaining_seconds();
     match format {
-        OutputFormat::Json => print_json(&filtered, &pass, rem),
+        OutputFormat::Json => print_json(&filtered, &pass, rem, alias_filter.is_some()),
         OutputFormat::Table => {
             if quiet {
                 print_table(&filtered, &pass, rem, alias_filter.is_some(), quiet);
@@ -330,32 +330,43 @@ pub fn print_table(records: &[&Record], pass: &str, rem: u64, is_single_alias: b
     }
 }
 
-fn print_json(records: &[&Record], pass: &str, rem: u64) {
-    let list: Vec<serde_json::Value> = records
+fn record_to_json(record: &Record, pass: &str, rem: u64) -> serde_json::Value {
+    let (otp, error) = match get_otp_display(record, pass) {
+        Ok(otp) => (otp, None),
+        Err(e) => (OTP_ERROR_TEXT.to_string(), Some(e.as_str())),
+    };
+
+    let mut entry = serde_json::json!({
+        "alias": record.alias,
+        "otp": otp,
+        "remaining_secs": rem,
+        "is_encrypted": !record.is_unencrypted,
+        "created_at": record.created_at
+    });
+
+    // only present on failures, so successful entries stay unchanged
+    if let Some(message) = error {
+        entry["error"] = serde_json::Value::String(message.to_string());
+    }
+
+    entry
+}
+
+/// Prints records as JSON. A single alias that matches exactly one record is
+/// printed as an object, so `jq .otp` works without indexing.
+fn print_json(records: &[&Record], pass: &str, rem: u64, single: bool) {
+    let entries: Vec<serde_json::Value> = records
         .iter()
-        .map(|r| {
-            let (otp, error) = match get_otp_display(r, pass) {
-                Ok(otp) => (otp, None),
-                Err(e) => (OTP_ERROR_TEXT.to_string(), Some(e.as_str())),
-            };
-
-            let mut entry = serde_json::json!({
-                "alias": r.alias,
-                "otp": otp,
-                "remaining_secs": rem,
-                "is_encrypted": !r.is_unencrypted,
-                "created_at": r.created_at
-            });
-
-            // only present on failures, so successful entries stay unchanged
-            if let Some(message) = error {
-                entry["error"] = serde_json::Value::String(message.to_string());
-            }
-
-            entry
-        })
+        .map(|r| record_to_json(r, pass, rem))
         .collect();
-    println!("{}", serde_json::to_string_pretty(&list).unwrap());
+
+    let output = if single && entries.len() == 1 {
+        entries[0].clone()
+    } else {
+        serde_json::Value::Array(entries)
+    };
+
+    println!("{}", serde_json::to_string_pretty(&output).unwrap());
 }
 
 pub fn rename(path: &Path, old_alias: &str, new_alias: &str) -> Result<(), String> {

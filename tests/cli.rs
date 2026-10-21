@@ -1122,3 +1122,214 @@ fn import_rejects_invalid_algorithm() -> Result<(), Box<dyn std::error::Error>> 
 
     Ok(())
 }
+
+const OTPAUTH_URI: &str = "otpauth://totp/URI:alice?secret=JBSWY3DPEHPK3PXP&issuer=URI\
+&algorithm=SHA256&digits=8&period=60";
+
+fn export_json(path: &std::path::Path) -> Result<serde_json::Value, Box<dyn std::error::Error>> {
+    let out = NamedTempFile::new()?;
+
+    hermes(path)
+        .arg("export")
+        .arg("-o")
+        .arg(out.path())
+        .assert()
+        .success();
+
+    let content = std::fs::read_to_string(out.path())?;
+    Ok(serde_json::from_str(&content)?)
+}
+
+#[test]
+fn add_defaults_to_sha1_6_30() -> Result<(), Box<dyn std::error::Error>> {
+    let file = NamedTempFile::new()?;
+    let path = file.path();
+
+    hermes(path)
+        .arg("add")
+        .args(["defaults", "-c", CODE, "--password", PASSWORD, "-u"])
+        .assert()
+        .success();
+
+    let json = export_json(path)?;
+    let record = &json.as_array().unwrap()[0];
+    assert_eq!(record["algorithm"], "sha1");
+    assert_eq!(record["digits"], 6);
+    assert_eq!(record["period"], 30);
+
+    let output = hermes(path)
+        .arg("ls")
+        .args(["defaults", "-u", "--format", "json"])
+        .output()?;
+    let entry: serde_json::Value = serde_json::from_slice(&output.stdout)?;
+    assert_eq!(entry["otp"].as_str().unwrap().len(), 6);
+
+    Ok(())
+}
+
+#[test]
+fn add_accepts_custom_otp_parameters() -> Result<(), Box<dyn std::error::Error>> {
+    let file = NamedTempFile::new()?;
+    let path = file.path();
+
+    hermes(path)
+        .arg("add")
+        .args(["custom", "-c", CODE, "--password", PASSWORD, "-u"])
+        .args(["--algorithm", "sha256", "--digits", "8", "--period", "60"])
+        .assert()
+        .success();
+
+    let json = export_json(path)?;
+    let record = &json.as_array().unwrap()[0];
+    assert_eq!(record["algorithm"], "sha256");
+    assert_eq!(record["digits"], 8);
+    assert_eq!(record["period"], 60);
+
+    // the code is generated with the custom parameters immediately
+    let output = hermes(path)
+        .arg("ls")
+        .args(["custom", "-u", "--format", "json"])
+        .output()?;
+    let entry: serde_json::Value = serde_json::from_slice(&output.stdout)?;
+
+    assert_eq!(entry["otp"].as_str().unwrap().len(), 8);
+    let remaining = entry["remaining_secs"].as_u64().unwrap();
+    assert!(
+        (1..=60).contains(&remaining),
+        "remaining_secs should be within the 60s period, got {remaining}"
+    );
+
+    Ok(())
+}
+
+#[test]
+fn add_rejects_invalid_otp_parameters() -> Result<(), Box<dyn std::error::Error>> {
+    let file = NamedTempFile::new()?;
+    let path = file.path();
+
+    hermes(path)
+        .arg("add")
+        .args(["bad", "-c", CODE, "-u", "--digits", "5"])
+        .assert()
+        .failure()
+        .code(1)
+        .stderr(predicate::str::contains("Only 6 to 8 digits"));
+
+    hermes(path)
+        .arg("add")
+        .args(["bad", "-c", CODE, "-u", "--period", "0"])
+        .assert()
+        .failure()
+        .code(1)
+        .stderr(predicate::str::contains("between 1 and 300 seconds"));
+
+    // --algorithm is a clap value enum, so it is rejected before our code
+    hermes(path)
+        .arg("add")
+        .args(["bad", "-c", CODE, "-u", "--algorithm", "md5"])
+        .assert()
+        .failure()
+        .code(2)
+        .stderr(predicate::str::contains("possible values"));
+
+    Ok(())
+}
+
+#[test]
+fn add_accepts_otpauth_uri_via_code() -> Result<(), Box<dyn std::error::Error>> {
+    let file = NamedTempFile::new()?;
+    let path = file.path();
+
+    hermes(path)
+        .arg("add")
+        .arg("-c")
+        .arg(OTPAUTH_URI)
+        .arg("-u")
+        .assert()
+        .success();
+
+    let output = hermes(path)
+        .arg("ls")
+        .args(["URI:alice", "-u", "--format", "json"])
+        .output()?;
+    let entry: serde_json::Value = serde_json::from_slice(&output.stdout)?;
+
+    assert_eq!(entry["alias"], "URI:alice");
+    assert_eq!(entry["otp"].as_str().unwrap().len(), 8);
+
+    Ok(())
+}
+
+#[test]
+fn add_rejects_mixing_uri_with_parameters() -> Result<(), Box<dyn std::error::Error>> {
+    let file = NamedTempFile::new()?;
+    let path = file.path();
+
+    hermes(path)
+        .arg("add")
+        .arg("-c")
+        .arg(OTPAUTH_URI)
+        .arg("-u")
+        .args(["--digits", "8"])
+        .assert()
+        .failure()
+        .code(1)
+        .stderr(predicate::str::contains("cannot combine"));
+
+    hermes(path)
+        .arg("add")
+        .args(["myalias", "-c", OTPAUTH_URI, "-u"])
+        .assert()
+        .failure()
+        .code(1)
+        .stderr(predicate::str::contains("already contains the alias"));
+
+    Ok(())
+}
+
+#[test]
+fn add_help_documents_otp_parameters() -> Result<(), Box<dyn std::error::Error>> {
+    let output = cargo_bin_cmd!("hermes-otp")
+        .arg("add")
+        .arg("--help")
+        .output()?;
+    let help = String::from_utf8_lossy(&output.stdout);
+
+    assert!(help.contains("--algorithm"), "{help}");
+    assert!(help.contains("--digits"), "{help}");
+    assert!(help.contains("--period"), "{help}");
+    assert!(help.contains("[default: sha1]"), "{help}");
+    assert!(
+        help.contains("[possible values: sha1, sha256, sha512]"),
+        "{help}"
+    );
+
+    Ok(())
+}
+
+#[test]
+fn update_preserves_otp_parameters() -> Result<(), Box<dyn std::error::Error>> {
+    let file = NamedTempFile::new()?;
+    let path = file.path();
+
+    hermes(path)
+        .arg("add")
+        .args(["keep", "-c", CODE, "--password", PASSWORD, "-u"])
+        .args(["--algorithm", "sha512", "--digits", "7", "--period", "45"])
+        .assert()
+        .success();
+
+    hermes(path)
+        .arg("update")
+        .args(["keep", "-c", "GEZDGNBVGY3TQOJQ", "-u"])
+        .assert()
+        .success();
+
+    let json = export_json(path)?;
+    let record = &json.as_array().unwrap()[0];
+    assert_eq!(record["algorithm"], "sha512");
+    assert_eq!(record["digits"], 7);
+    assert_eq!(record["period"], 45);
+
+    Ok(())
+}

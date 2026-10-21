@@ -803,3 +803,131 @@ fn add_accepts_a_different_password_per_record() -> Result<(), Box<dyn std::erro
 
     Ok(())
 }
+
+#[cfg(unix)]
+mod unix_permissions {
+    use super::*;
+    use std::os::unix::fs::PermissionsExt;
+
+    fn mode(path: &std::path::Path) -> u32 {
+        std::fs::metadata(path)
+            .expect("metadata")
+            .permissions()
+            .mode()
+            & 0o777
+    }
+
+    fn add_record(path: &std::path::Path, alias: &str) {
+        hermes(path)
+            .arg("add")
+            .args([alias, "-c", CODE, "--password", PASSWORD])
+            .assert()
+            .success();
+    }
+
+    #[test]
+    fn codex_file_and_dir_are_owner_only() -> Result<(), Box<dyn std::error::Error>> {
+        let dir = tempfile::tempdir()?;
+        let nested = dir.path().join("nested");
+        let codex = nested.join("codex");
+
+        add_record(&codex, "github");
+
+        assert_eq!(mode(&codex), 0o600, "codex must be 0600");
+        assert_eq!(mode(&nested), 0o700, "config dir must be 0700");
+
+        Ok(())
+    }
+
+    #[test]
+    fn existing_wide_codex_is_repaired() -> Result<(), Box<dyn std::error::Error>> {
+        let dir = tempfile::tempdir()?;
+        let nested = dir.path().join("nested");
+        let codex = nested.join("codex");
+
+        std::fs::create_dir_all(&nested)?;
+        std::fs::write(&codex, "")?;
+        std::fs::set_permissions(&codex, std::fs::Permissions::from_mode(0o755))?;
+        assert_eq!(mode(&codex), 0o755);
+
+        add_record(&codex, "github");
+
+        assert_eq!(mode(&codex), 0o600, "pre-existing codex must be repaired");
+
+        Ok(())
+    }
+
+    #[test]
+    fn custom_parent_is_not_repermissioned() -> Result<(), Box<dyn std::error::Error>> {
+        let dir = tempfile::tempdir()?;
+        let codex = dir.path().join("codex");
+
+        // a user-supplied parent must never be chmod'd
+        std::fs::set_permissions(dir.path(), std::fs::Permissions::from_mode(0o755))?;
+
+        add_record(&codex, "github");
+
+        assert_eq!(mode(dir.path()), 0o755, "custom parent must be left alone");
+        assert_eq!(mode(&codex), 0o600);
+
+        Ok(())
+    }
+
+    #[test]
+    fn backup_is_owner_only() -> Result<(), Box<dyn std::error::Error>> {
+        let dir = tempfile::tempdir()?;
+        let nested = dir.path().join("nested");
+        let codex = nested.join("codex");
+
+        add_record(&codex, "github");
+        // a second write creates codex.bak
+        add_record(&codex, "aws");
+
+        let backup = nested.join("codex.bak");
+        assert!(backup.exists(), "backup should exist");
+        assert_eq!(mode(&backup), 0o600, "backup must be 0600");
+
+        Ok(())
+    }
+
+    #[test]
+    fn export_is_owner_only() -> Result<(), Box<dyn std::error::Error>> {
+        let dir = tempfile::tempdir()?;
+        let nested = dir.path().join("nested");
+        let codex = nested.join("codex");
+        let out = dir.path().join("backup.json");
+
+        add_record(&codex, "github");
+
+        hermes(&codex)
+            .arg("export")
+            .arg("-o")
+            .arg(&out)
+            .assert()
+            .success();
+
+        assert_eq!(mode(&out), 0o600, "export must be 0600");
+
+        Ok(())
+    }
+
+    #[test]
+    fn default_config_dir_is_repaired() -> Result<(), Box<dyn std::error::Error>> {
+        let dir = tempfile::tempdir()?;
+        let config = dir.path().join("hermes-otp");
+        std::fs::create_dir_all(&config)?;
+        std::fs::set_permissions(&config, std::fs::Permissions::from_mode(0o755))?;
+
+        // no --path: the default config dir is resolved from XDG_CONFIG_HOME
+        cargo_bin_cmd!("hermes-otp")
+            .env("XDG_CONFIG_HOME", dir.path())
+            .args(["add", "github", "-c", CODE, "--password", PASSWORD])
+            .assert()
+            .success();
+
+        assert_eq!(mode(&config), 0o700, "default config dir must be repaired");
+        assert_eq!(mode(&config.join("codex")), 0o600);
+
+        Ok(())
+    }
+}

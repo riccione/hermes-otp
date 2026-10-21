@@ -112,7 +112,7 @@ Flags:
 * `-p`, `--path`: Custom path to the codex file.
 * `-u`, `--unencrypt`: WARNING: Store the secret in plain text. Use for debugging only.
 * `--password`: WARNING: Using this flag leaves password in shell history.
-* `-q`, `--quiet`: Only for `ls <ALIAS>`. Do not display progress bar.
+* `-q`, `--quiet`: Only for `ls`. Plain output for scripts: no countdown bar or interactive prompt.
 * `-e`, `--exact`: Only for `ls <ALIAS>`. Exact match (case-sensitive).
 * `-z`, `--fuzzy`: Only for `ls`. Fuzzy search across aliases (sorted by match score).
 * `-f [table, json]`, `--format [table, json]`: Only for `ls` command. Format output as table (default) or as JSON.

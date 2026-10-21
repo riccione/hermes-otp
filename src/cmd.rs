@@ -114,31 +114,29 @@ pub fn update_code(
 ) -> Result<(), String> {
     let clean_code = sanitize_and_validate_code(new_code)?;
 
-    // Check if the alias even exists before we do anything else
-    if !file::alias_exists(alias, path) {
-        return Err(format!("No record for '{alias}' found."));
-    }
+    // Locate the record first: we need to know whether it is encrypted.
+    let records = file::read_codex(path)?;
+    let existing = records
+        .iter()
+        .find(|r| r.alias == *alias)
+        .ok_or_else(|| format!("No record for '{alias}' found."))?;
+    let target_is_encrypted = !existing.is_unencrypted;
 
-    // Resolve password once (if needed)
-    let pass = (!*is_unencrypt)
+    // The record's password is needed to prove access whenever the record is
+    // encrypted, even if the replacement will be stored in plaintext (-u).
+    let need_password = target_is_encrypted || !*is_unencrypt;
+    let pass = need_password
         .then(|| get_effective_password(password))
         .transpose()?;
 
-    // Verify the password against the current secret before replacing it,
-    // otherwise a typo silently re-keys the record with a password the user
-    // does not expect.
-    if let Some(p) = &pass {
-        let records = file::read_codex(path)?;
-        if let Some(existing) = records.iter().find(|r| r.alias == *alias)
-            && !existing.is_unencrypted
-        {
-            otp::decrypt(&existing.secret, p).map_err(|_| {
-                format!(
-                    "Cannot decrypt the existing secret for '{alias}' \
-                     (wrong password or corrupt record). Nothing was changed."
-                )
-            })?;
-        }
+    // Verify against this record only: each record is encrypted on its own,
+    // so there is no vault-wide password to check.
+    if target_is_encrypted {
+        let p = pass
+            .as_ref()
+            .ok_or("Incorrect password. Nothing was changed.")?;
+        otp::decrypt(&existing.secret, p)
+            .map_err(|_| "Incorrect password. Nothing was changed.".to_string())?;
     }
 
     // Do the swap

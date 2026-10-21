@@ -97,7 +97,12 @@ pub fn add(
 
     println!("Record saved.");
 
-    match otp::generate_otp(&clean_code) {
+    match otp::generate_otp(
+        &clean_code,
+        &record.algorithm,
+        record.digits as u32,
+        record.period as u64,
+    ) {
         Ok(code) => println!("{code}"),
         Err(_) => println!("Error: failed to generate OTP"),
     }
@@ -241,12 +246,11 @@ pub fn ls(
         .transpose()?
         .unwrap_or_default();
 
-    let rem = otp::get_remaining_seconds();
     match format {
-        OutputFormat::Json => print_json(&filtered, &pass, rem, alias_filter.is_some()),
+        OutputFormat::Json => print_json(&filtered, &pass, alias_filter.is_some()),
         OutputFormat::Table => {
             if quiet {
-                print_table(&filtered, &pass, rem, alias_filter.is_some(), quiet);
+                print_table(&filtered, &pass, alias_filter.is_some(), quiet);
             } else {
                 let table = Table::new(&filtered, &pass, alias_filter.is_some());
                 table.render();
@@ -269,12 +273,13 @@ pub fn ls(
         return if failed.len() == total {
             Err(AppError::from(format!(
                 "could not produce a code for {failed_len} record(s) \
-                 (wrong password or corrupt secret): {aliases}",
+                 (wrong password, corrupt secret, or unsupported parameters): {aliases}",
                 failed_len = failed.len()
             )))
         } else {
             Err(AppError::partial(format!(
-                "{failed_len} of {total} records failed (wrong password or corrupt secret): {aliases}",
+                "{failed_len} of {total} records failed \
+                 (wrong password, corrupt secret, or unsupported parameters): {aliases}",
                 failed_len = failed.len()
             )))
         };
@@ -290,7 +295,14 @@ fn get_otp_display(record: &Record, pass: &str) -> Result<String, otp::OtpError>
         otp::decrypt(&record.secret, pass)
     };
 
-    secret.and_then(|s| otp::generate_otp(&s))
+    secret.and_then(|s| {
+        otp::generate_otp(
+            &s,
+            &record.algorithm,
+            record.digits as u32,
+            record.period as u64,
+        )
+    })
 }
 
 /// Renders the OTP cell of a record, falling back to an error marker.
@@ -298,19 +310,24 @@ fn otp_cell(record: &Record, pass: &str) -> String {
     get_otp_display(record, pass).unwrap_or_else(|_| OTP_ERROR_TEXT.to_string())
 }
 
-pub fn print_table(records: &[&Record], pass: &str, rem: u64, is_single_alias: bool, quiet: bool) {
-    let mut bar = String::from("");
-    if !quiet {
-        let bar_width = 20;
-        let safe_rem = rem.min(30) as usize;
+/// Renders the countdown bar for `rem` seconds out of `period`.
+fn progress_bar(rem: u64, period: u64, width: usize) -> String {
+    let period = period.max(1);
+    let safe_rem = rem.min(period) as usize;
+    let filled = safe_rem * width / period as usize;
+    let empty = width - filled;
 
-        let filled = (safe_rem * bar_width) / 30;
-        let empty = bar_width - filled;
-        bar = format!("[{0}{1}]", "#".repeat(filled), ".".repeat(empty));
-    }
+    format!("[{0}{1}]", "#".repeat(filled), ".".repeat(empty))
+}
+
+pub fn print_table(records: &[&Record], pass: &str, is_single_alias: bool, quiet: bool) {
     if is_single_alias && records.len() == 1 {
-        let otp = otp_cell(records[0], pass);
+        let record = records[0];
+        let otp = otp_cell(record, pass);
         if !quiet {
+            let period = record.period as u64;
+            let rem = otp::get_remaining_seconds(period);
+            let bar = progress_bar(rem, period, 20);
             eprintln!("{0} {1: <3} remaining", bar, rem.to_string() + "s");
         }
         println!("{}", otp);
@@ -319,8 +336,15 @@ pub fn print_table(records: &[&Record], pass: &str, rem: u64, is_single_alias: b
         println!("{:-<15}-|-{:-<10}-|-{:-<4}", "", "", "");
         for r in records {
             let otp = otp_cell(r, pass);
+            let period = r.period as u64;
+            let rem = otp::get_remaining_seconds(period);
+            let bar = if quiet {
+                String::new()
+            } else {
+                progress_bar(rem, period, 20)
+            };
             println!(
-                "{0: <15} | {1: <10} | {2: <3} {3}",
+                "{0: <15} | {1: <10} | {2: <4} {3}",
                 r.alias,
                 otp,
                 rem.to_string() + "s",
@@ -330,7 +354,9 @@ pub fn print_table(records: &[&Record], pass: &str, rem: u64, is_single_alias: b
     }
 }
 
-fn record_to_json(record: &Record, pass: &str, rem: u64) -> serde_json::Value {
+fn record_to_json(record: &Record, pass: &str) -> serde_json::Value {
+    let rem = otp::get_remaining_seconds(record.period as u64);
+
     let (otp, error) = match get_otp_display(record, pass) {
         Ok(otp) => (otp, None),
         Err(e) => (OTP_ERROR_TEXT.to_string(), Some(e.as_str())),
@@ -354,11 +380,8 @@ fn record_to_json(record: &Record, pass: &str, rem: u64) -> serde_json::Value {
 
 /// Prints records as JSON. A single alias that matches exactly one record is
 /// printed as an object, so `jq .otp` works without indexing.
-fn print_json(records: &[&Record], pass: &str, rem: u64, single: bool) {
-    let entries: Vec<serde_json::Value> = records
-        .iter()
-        .map(|r| record_to_json(r, pass, rem))
-        .collect();
+fn print_json(records: &[&Record], pass: &str, single: bool) {
+    let entries: Vec<serde_json::Value> = records.iter().map(|r| record_to_json(r, pass)).collect();
 
     let output = if single && entries.len() == 1 {
         entries[0].clone()
@@ -607,4 +630,29 @@ pub fn import(codex_path: &Path, input_path: &Path) -> Result<(), String> {
     let count = all_records.len();
     println!("Successfully imported {count} records total.");
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::progress_bar;
+
+    #[test]
+    fn bar_fills_against_the_record_period() {
+        // 30 second period
+        assert_eq!(progress_bar(30, 30, 20), format!("[{}]", "#".repeat(20)));
+        assert_eq!(progress_bar(0, 30, 20), format!("[{}]", ".".repeat(20)));
+
+        // 60 second period: half way is half the bar, not a full one
+        assert_eq!(progress_bar(60, 60, 20), format!("[{}]", "#".repeat(20)));
+        assert_eq!(
+            progress_bar(30, 60, 20),
+            format!("[{}]", "#".repeat(10) + &".".repeat(10))
+        );
+        assert_eq!(progress_bar(0, 60, 20), format!("[{}]", ".".repeat(20)));
+    }
+
+    #[test]
+    fn bar_does_not_divide_by_zero() {
+        assert_eq!(progress_bar(0, 0, 20), format!("[{}]", ".".repeat(20)));
+    }
 }

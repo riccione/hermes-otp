@@ -215,6 +215,29 @@ otpauth://totp/GitHub:alice?secret=JBSWY3DPEHPK3PXP&issuer=GitHub
 otpauth://totp/Google:bob?secret=ONSWY3DPEHPK3PXP&issuer=Google
 ```
 
+The RFC 6238 parameters are honored, not just the secret:
+
+| Parameter | Default | Accepted values |
+|-----------|---------|-----------------|
+| `secret` | *(required)* | Base32 |
+| `issuer` | none | any string |
+| `algorithm` | `sha1` | `sha1`, `sha256`, `sha512` (case-insensitive) |
+| `digits` | `6` | `6` to `8` |
+| `period` | `30` | `1` to `300` seconds |
+
+Invalid values are rejected at import instead of silently producing wrong
+codes:
+
+```
+$ hermes-otp add --otpauth "otpauth://totp/App:user?secret=JBSWY3DPEHPK3PXP&digits=9"
+Error: Unsupported OTP parameter (digits=9). Only 6 to 8 digits are supported.
+```
+
+```sh
+hermes-otp add --otpauth \
+  "otpauth://totp/Ent:alice?secret=JBSWY3DPEHPK3PXP&issuer=Ent&algorithm=SHA256&digits=8&period=60"
+```
+
 ### Export and Import
 
 Export all records to a JSON backup file:

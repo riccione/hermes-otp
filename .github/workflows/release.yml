@@ -12,9 +12,9 @@ permissions:
 
 jobs:
   release:
-    uses: riccione/github-workflows/.github/workflows/rust-release.yml@309464f75695501b26e988010273cc182de38f3a
+    uses: riccione/github-workflows/.github/workflows/rust-release.yml@b27a8bfb3daae371bbd204a6d6555b7f062314f0
     permissions:
       contents: write
     with:
-      bin_name: hermes-otp
+      bin_names: "hermes-otp"
       tag: ${{ github.ref_name }}

@@ -43,61 +43,34 @@ impl OtpAuth {
             _ => decoded_label,
         };
 
-        let algorithm = match query_params.get("algorithm") {
-            None => "sha1".to_string(),
-            Some(raw) => {
-                let normalized = raw.to_lowercase();
+        let algorithm = query_params
+            .get("algorithm")
+            .map(|raw| raw.to_lowercase())
+            .unwrap_or_else(|| "sha1".to_string());
 
-                if !matches!(normalized.as_str(), "sha1" | "sha256" | "sha512") {
-                    return Err(format!(
-                        "Unsupported OTP parameter (algorithm={raw}). \
-                         Only sha1, sha256 and sha512 are supported."
-                    ));
-                }
-
-                normalized
-            }
-        };
-
+        // Absent parameters fall back to the defaults; present but unparseable
+        // ones are rejected with the same wording as the shared validator.
         let digits = match query_params.get("digits") {
             None => 6,
-            Some(raw) => {
-                let invalid = || {
-                    format!(
-                        "Unsupported OTP parameter (digits={raw}). \
-                         Only 6 to 8 digits are supported."
-                    )
-                };
-
-                let parsed = raw.parse::<u8>().map_err(|_| invalid())?;
-
-                if !(6..=8).contains(&parsed) {
-                    return Err(invalid());
-                }
-
-                parsed
-            }
+            Some(raw) => raw.parse::<u8>().map_err(|_| {
+                format!(
+                    "Unsupported OTP parameter (digits={raw}). \
+                     Only 6 to 8 digits are supported."
+                )
+            })?,
         };
 
         let period = match query_params.get("period") {
             None => 30,
-            Some(raw) => {
-                let invalid = || {
-                    format!(
-                        "Unsupported OTP parameter (period={raw}). \
-                         Period must be between 1 and 300 seconds."
-                    )
-                };
-
-                let parsed = raw.parse::<u32>().map_err(|_| invalid())?;
-
-                if !(1..=300).contains(&parsed) {
-                    return Err(invalid());
-                }
-
-                parsed
-            }
+            Some(raw) => raw.parse::<u32>().map_err(|_| {
+                format!(
+                    "Unsupported OTP parameter (period={raw}). \
+                     Period must be between 1 and 300 seconds."
+                )
+            })?,
         };
+
+        crate::otp::validate_params(&algorithm, digits as u32, period)?;
 
         let created_at = SystemTime::now()
             .duration_since(UNIX_EPOCH)

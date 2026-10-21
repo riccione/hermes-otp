@@ -28,6 +28,17 @@ pub struct EncryptArgs {
     pub password: Option<String>,
 }
 
+const QUIET_LONG_HELP: &str = "Plain output, intended for scripts and pipelines: no countdown bar and no \"Press any key to exit\" prompt.
+
+With a single ALIAS match, prints only the code on one line:
+  $ hermes-otp ls -q git
+  508183
+
+When multiple records match (or no ALIAS is given), prints the plain
+table without the countdown bar.
+
+Does not change the output format: combine with -f json for JSON.";
+
 #[derive(Subcommand)]
 pub enum Commands {
     /// Adds code to hermes-otp
@@ -64,7 +75,12 @@ pub enum Commands {
     /// Get codes for all/alias records
     Ls {
         alias: Option<String>,
-        #[clap(short, long)]
+        #[arg(
+            short,
+            long,
+            help = "Plain output for scripts: no countdown bar or interactive prompt",
+            long_help = QUIET_LONG_HELP
+        )]
         quiet: bool,
         /// Match the alias exactly (case-sensitive). Conflicts with --fuzzy.
         /// The default lookup is case-insensitive.

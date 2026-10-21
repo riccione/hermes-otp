@@ -66,7 +66,9 @@ pub enum Commands {
         alias: Option<String>,
         #[clap(short, long)]
         quiet: bool,
-        #[clap(short, long, conflicts_with = "fuzzy")]
+        /// Match the alias exactly (case-sensitive). Conflicts with --fuzzy.
+        /// The default lookup is case-insensitive.
+        #[clap(short, long, conflicts_with = "fuzzy", verbatim_doc_comment)]
         exact: bool,
         /// Fuzzy search across aliases (sorted by match score)
         #[clap(short = 'z', long, conflicts_with = "exact")]

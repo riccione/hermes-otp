@@ -186,18 +186,15 @@ pub fn ls(
 
             scored.sort_by_key(|b| std::cmp::Reverse(b.0));
             scored.into_iter().map(|(_, r)| r).collect()
+        } else if exact_match {
+            // exact match is case-sensitive, like remove/rename/update
+            records.iter().filter(|r| r.alias == *filter).collect()
         } else {
+            // partial match is case-insensitive
             let filter_lower = filter.to_lowercase();
             records
                 .iter()
-                .filter(|r| {
-                    let alias_lower = r.alias.to_lowercase();
-                    if exact_match {
-                        alias_lower == filter_lower
-                    } else {
-                        alias_lower.contains(&filter_lower)
-                    }
-                })
+                .filter(|r| r.alias.to_lowercase().contains(&filter_lower))
                 .collect()
         }
     } else {

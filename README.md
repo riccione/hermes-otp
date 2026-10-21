@@ -100,7 +100,7 @@ Commands:
 * `ls [OPTIONS]`: Get all OTP codes.
 * `ls <ALIAS>`: Get OTP code by alias.
 * `ls <PARTIAL MATCH>`: Get OTP codes by partial match. 
-* `ls --exact <ALIAS>`: Get OTP codes by exact match. 
+* `ls --exact <ALIAS>`: Get OTP codes by exact match (case-sensitive). 
 * `config`: Show location of the codex file.
 * `export -o <FILE>`: Export all records to a JSON file (backup).
 * `import <FILE>`: Import records from a JSON file.
@@ -113,7 +113,7 @@ Flags:
 * `-u`, `--unencrypt`: WARNING: Store the secret in plain text. Use for debugging only.
 * `--password`: WARNING: Using this flag leaves password in shell history.
 * `-q`, `--quiet`: Only for `ls <ALIAS>`. Do not display progress bar.
-* `-e`, `--exact`: Only for `ls <ALIAS`. Exact match.
+* `-e`, `--exact`: Only for `ls <ALIAS>`. Exact match (case-sensitive).
 * `-z`, `--fuzzy`: Only for `ls`. Fuzzy search across aliases (sorted by match score).
 * `-f [table, json]`, `--format [table, json]`: Only for `ls` command. Format output as table (default) or as JSON.
 * `--otpauth <URI>`: Import from otpauth:// URI.

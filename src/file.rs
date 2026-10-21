@@ -1,5 +1,6 @@
 use crate::models::Record;
 use serde_json::Deserializer;
+use std::fs;
 use std::fs::OpenOptions;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
@@ -7,11 +8,77 @@ use std::path::{Path, PathBuf};
 const FILE_CODEX: &str = "codex";
 const PROJECT: &str = "hermes-otp";
 
+/// Directory this app owns for its own data, e.g. `~/.config/hermes-otp`.
+fn default_config_dir() -> Option<PathBuf> {
+    dirs::config_dir().map(|mut path| {
+        path.push(PROJECT);
+        path
+    })
+}
+
+/// True when `dir` is the directory this app owns for its own data.
+fn is_default_config_dir(dir: &Path) -> bool {
+    default_config_dir().map(|d| d == dir).unwrap_or(false)
+}
+
+/// Restricts `path` to owner read/write (0600). No-op on non-Unix platforms.
+pub fn secure_file(path: &Path) -> io::Result<()> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+
+        if path.exists() {
+            fs::set_permissions(path, fs::Permissions::from_mode(0o600))?;
+        }
+    }
+
+    #[cfg(not(unix))]
+    {
+        let _ = path;
+    }
+
+    Ok(())
+}
+
+/// Restricts `path` to owner read/write/execute (0700). No-op on non-Unix
+/// platforms.
+pub fn secure_dir(path: &Path) -> io::Result<()> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+
+        if path.exists() {
+            fs::set_permissions(path, fs::Permissions::from_mode(0o700))?;
+        }
+    }
+
+    #[cfg(not(unix))]
+    {
+        let _ = path;
+    }
+
+    Ok(())
+}
+
+/// Secures a codex file, and its directory when that directory belongs to this
+/// app. A user-supplied parent (e.g. `/tmp`, `$HOME`) is never re-permissioned.
+fn secure_codex_paths(path: &Path) -> io::Result<()> {
+    secure_file(path)?;
+
+    if let Some(parent) = path.parent()
+        && !parent.as_os_str().is_empty()
+        && is_default_config_dir(parent)
+    {
+        secure_dir(parent)?;
+    }
+
+    Ok(())
+}
+
 pub fn get_default_path() -> PathBuf {
     // using dirs fn to get location of config directory
-    dirs::config_dir()
+    default_config_dir()
         .map(|mut path| {
-            path.push(PROJECT);
             path.push(FILE_CODEX);
             path
         })
@@ -44,13 +111,41 @@ pub fn read_codex(path: &Path) -> Result<Vec<Record>, String> {
 }
 
 pub fn append_to_file(path: &Path, data: &str) -> io::Result<()> {
-    let mut data_file = OpenOptions::new().append(true).create(true).open(path)?;
-    writeln!(data_file, "{}", data.trim())
+    let mut options = OpenOptions::new();
+    options.append(true).create(true);
+
+    // create the file owner-only from the start, so it is never briefly
+    // world-readable
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+
+    let mut data_file = options.open(path)?;
+    writeln!(data_file, "{}", data.trim())?;
+    drop(data_file);
+
+    secure_codex_paths(path)
 }
 
 pub fn overwrite_file(path: &Path, data: &str) -> io::Result<()> {
     let content = format!("{}\n", data.trim());
-    std::fs::write(path, content)
+
+    let mut options = OpenOptions::new();
+    options.write(true).create(true).truncate(true);
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+
+    let mut data_file = options.open(path)?;
+    data_file.write_all(content.as_bytes())?;
+    drop(data_file);
+
+    secure_codex_paths(path)
 }
 
 pub fn alias_exists(alias: &str, path: &Path) -> bool {
@@ -61,13 +156,35 @@ pub fn alias_exists(alias: &str, path: &Path) -> bool {
 
 pub fn ensure_dir_exists(path: &Path) -> io::Result<()> {
     // only attempt to create directories if there is a parent component
-    if let Some(parent) = path.parent() {
-        // if the path is just "test.codex", parent() might be Some("") or empty
-        // call create_dir_all if the parent isn't empty
-        if !parent.as_os_str().is_empty() {
-            std::fs::create_dir_all(parent)?;
-        }
+    let Some(parent) = path.parent() else {
+        return Ok(());
+    };
+
+    // if the path is just "test.codex", parent() might be Some("") or empty
+    if parent.as_os_str().is_empty() {
+        return Ok(());
     }
+
+    let existed = parent.exists();
+
+    let mut builder = fs::DirBuilder::new();
+    builder.recursive(true);
+
+    // new directories are created owner-only
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::DirBuilderExt;
+        builder.mode(0o700);
+    }
+
+    builder.create(parent)?;
+
+    // Tighten a directory we just created, or the directory this app owns.
+    // Never chmod an arbitrary pre-existing parent: it may be /tmp or $HOME.
+    if !existed || is_default_config_dir(parent) {
+        secure_dir(parent)?;
+    }
+
     Ok(())
 }
 
@@ -82,7 +199,11 @@ fn perform_backup(path: &Path, extension: &str) -> io::Result<PathBuf> {
     let mut backup_path = path.to_path_buf();
     backup_path.set_extension(extension);
 
+    // std::fs::copy copies the source's mode bits, so a codex that was
+    // world-readable would otherwise produce a world-readable backup
     std::fs::copy(path, &backup_path)?;
+    secure_file(&backup_path)?;
+
     Ok(backup_path)
 }
 

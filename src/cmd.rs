@@ -124,6 +124,23 @@ pub fn update_code(
         .then(|| get_effective_password(password))
         .transpose()?;
 
+    // Verify the password against the current secret before replacing it,
+    // otherwise a typo silently re-keys the record with a password the user
+    // does not expect.
+    if let Some(p) = &pass {
+        let records = file::read_codex(path)?;
+        if let Some(existing) = records.iter().find(|r| r.alias == *alias)
+            && !existing.is_unencrypted
+        {
+            otp::decrypt(&existing.secret, p).map_err(|_| {
+                format!(
+                    "Cannot decrypt the existing secret for '{alias}' \
+                     (wrong password or corrupt record). Nothing was changed."
+                )
+            })?;
+        }
+    }
+
     // Do the swap
     remove(path, alias)?;
     add(path, alias, &clean_code, is_unencrypt, &pass)?;

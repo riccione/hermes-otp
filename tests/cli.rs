@@ -597,7 +597,7 @@ fn ls_json_reports_error_field() -> Result<(), Box<dyn std::error::Error>> {
     let entry = &json.as_array().unwrap()[0];
 
     // the failure is reported in a dedicated field
-    assert_eq!(entry["error"], "decryption failed");
+    assert_eq!(entry["error"], "authentication failed");
     // and the otp field still carries a visible marker
     assert!(entry["otp"].as_str().unwrap().contains("decryption failed"));
 
@@ -715,7 +715,7 @@ fn ls_json_single_alias_error_is_object() -> Result<(), Box<dyn std::error::Erro
     // the failure path keeps the object shape and reports the reason
     assert!(json.is_object(), "single alias must be a JSON object");
     assert_eq!(json["alias"], "aws");
-    assert_eq!(json["error"], "decryption failed");
+    assert_eq!(json["error"], "authentication failed");
 
     Ok(())
 }
@@ -1330,6 +1330,197 @@ fn update_preserves_otp_parameters() -> Result<(), Box<dyn std::error::Error>> {
     assert_eq!(record["algorithm"], "sha512");
     assert_eq!(record["digits"], 7);
     assert_eq!(record["period"], 45);
+
+    Ok(())
+}
+
+fn legacy_ciphertext(secret: &str, password: &str) -> String {
+    use magic_crypt::{MagicCryptTrait, new_magic_crypt};
+
+    let mc = new_magic_crypt!(password.trim(), 256);
+    mc.encrypt_str_to_base64(secret)
+}
+
+fn v1_record(alias: &str, secret: &str, created_at: u64) -> serde_json::Value {
+    serde_json::json!({
+        "alias": alias,
+        "secret": secret,
+        "is_unencrypted": false,
+        "algorithm": "sha1",
+        "digits": 6,
+        "period": 30,
+        "created_at": created_at
+    })
+}
+
+#[test]
+fn ls_migrates_legacy_records_to_v2() -> Result<(), Box<dyn std::error::Error>> {
+    let file = NamedTempFile::new()?;
+    let path = file.path();
+
+    let legacy = legacy_ciphertext(CODE, PASSWORD);
+    let record = v1_record("legacy", &legacy, 1);
+    std::fs::write(path, format!("{}\n", serde_json::to_string(&record)?))?;
+    let before = std::fs::read_to_string(path)?;
+
+    hermes(path)
+        .arg("ls")
+        .args(["legacy", "-q", "--password", PASSWORD])
+        .assert()
+        .success()
+        .stdout(predicate::str::is_match("^[0-9]{6}")?);
+
+    let after = std::fs::read_to_string(path)?;
+    assert!(after.contains("v2$"), "record should be migrated to v2");
+
+    // the routine .bak is untouched; a dedicated pre-v2 snapshot is created
+    let backup = path.with_extension("pre-v2.bak");
+    assert!(backup.exists(), "pre-v2 backup should exist");
+    assert_eq!(
+        std::fs::read_to_string(&backup)?,
+        before,
+        "pre-v2 backup must hold the original vault"
+    );
+
+    Ok(())
+}
+
+#[test]
+fn ls_wrong_password_leaves_legacy_record_untouched() -> Result<(), Box<dyn std::error::Error>> {
+    let file = NamedTempFile::new()?;
+    let path = file.path();
+
+    let legacy = legacy_ciphertext(CODE, PASSWORD);
+    let record = v1_record("legacy", &legacy, 1);
+    std::fs::write(path, format!("{}\n", serde_json::to_string(&record)?))?;
+    let before = std::fs::read_to_string(path)?;
+
+    hermes(path)
+        .arg("ls")
+        .args(["legacy", "--password", "wrong-password"])
+        .assert()
+        .failure()
+        .code(1);
+
+    assert_eq!(
+        std::fs::read_to_string(path)?,
+        before,
+        "a failed migration must not modify the codex"
+    );
+    assert!(!path.with_extension("pre-v2.bak").exists());
+
+    Ok(())
+}
+
+#[test]
+fn pre_v2_backup_survives_later_migrations() -> Result<(), Box<dyn std::error::Error>> {
+    let file = NamedTempFile::new()?;
+    let path = file.path();
+
+    let record_a = v1_record("a", &legacy_ciphertext(CODE, "pw-a"), 1);
+    let record_b = v1_record("b", &legacy_ciphertext(CODE, "pw-b"), 2);
+    let original = format!(
+        "{}\n{}\n",
+        serde_json::to_string(&record_a)?,
+        serde_json::to_string(&record_b)?
+    );
+    std::fs::write(path, &original)?;
+
+    // migrate the first record
+    hermes(path)
+        .arg("ls")
+        .args(["a", "-q", "--password", "pw-a"])
+        .assert()
+        .success();
+
+    let backup = path.with_extension("pre-v2.bak");
+    let first_snapshot = std::fs::read_to_string(&backup)?;
+    assert!(!first_snapshot.contains("v2$"));
+
+    // migrate the second record with its own password
+    hermes(path)
+        .arg("ls")
+        .args(["b", "-q", "--password", "pw-b"])
+        .assert()
+        .success();
+
+    assert_eq!(
+        std::fs::read_to_string(&backup)?,
+        first_snapshot,
+        "the original v1 snapshot must never be overwritten"
+    );
+    assert_eq!(first_snapshot, original);
+
+    Ok(())
+}
+
+#[test]
+fn plaintext_records_are_not_migrated() -> Result<(), Box<dyn std::error::Error>> {
+    let file = NamedTempFile::new()?;
+    let path = file.path();
+
+    hermes(path)
+        .arg("add")
+        .args(["plain", "-c", CODE, "-u"])
+        .assert()
+        .success();
+
+    hermes(path)
+        .arg("ls")
+        .args(["plain", "-q"])
+        .assert()
+        .success();
+
+    assert!(!std::fs::read_to_string(path)?.contains("v2$"));
+    assert!(!path.with_extension("pre-v2.bak").exists());
+
+    Ok(())
+}
+
+#[test]
+fn tampered_v2_record_reports_authentication_failure() -> Result<(), Box<dyn std::error::Error>> {
+    let file = NamedTempFile::new()?;
+    let path = file.path();
+
+    hermes(path)
+        .arg("add")
+        .args(["secure", "-c", CODE, "--password", PASSWORD])
+        .assert()
+        .success();
+
+    let content = std::fs::read_to_string(path)?;
+    let mut record: serde_json::Value = serde_json::from_str(content.lines().next().unwrap())?;
+
+    let secret = record["secret"].as_str().unwrap().to_string();
+    let parts: Vec<&str> = secret.split('$').collect();
+    assert_eq!(parts.len(), 4, "expected a v2 payload");
+
+    // change one base64 character of the ciphertext, keeping it decodable
+    let mut ciphertext: Vec<char> = parts[3].chars().collect();
+    let position = ciphertext.iter().position(|c| *c != '=').unwrap();
+    ciphertext[position] = if ciphertext[position] == 'A' {
+        'B'
+    } else {
+        'A'
+    };
+
+    let tampered = format!(
+        "{}${}${}${}",
+        parts[0],
+        parts[1],
+        parts[2],
+        ciphertext.into_iter().collect::<String>()
+    );
+    record["secret"] = serde_json::Value::String(tampered);
+    std::fs::write(path, format!("{}\n", serde_json::to_string(&record)?))?;
+
+    hermes(path)
+        .arg("ls")
+        .args(["-q", "-f", "json", "--password", PASSWORD])
+        .assert()
+        .failure()
+        .code(1)
+        .stdout(predicate::str::contains("authentication failed"));
 
     Ok(())
 }

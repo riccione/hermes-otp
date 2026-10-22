@@ -1,5 +1,4 @@
 use data_encoding::BASE32_NOPAD;
-use magic_crypt::{MagicCryptTrait, new_magic_crypt};
 use std::time::{SystemTime, UNIX_EPOCH};
 use totp_lite::{Sha1, Sha256, Sha512, totp_custom};
 
@@ -11,7 +10,6 @@ const MAX_PERIOD: u32 = 300;
 
 #[derive(Debug)]
 pub enum OtpError {
-    DecryptionFailed,
     InvalidBase32,
     SystemTimeError,
     UnsupportedAlgorithm,
@@ -22,7 +20,6 @@ pub enum OtpError {
 impl OtpError {
     pub fn as_str(&self) -> &'static str {
         match self {
-            OtpError::DecryptionFailed => "decryption failed",
             OtpError::InvalidBase32 => "invalid base32 secret",
             OtpError::SystemTimeError => "system time error",
             OtpError::UnsupportedAlgorithm => "unsupported algorithm",
@@ -120,17 +117,6 @@ fn generate_otp_at(
         "sha512" => Ok(totp_custom::<Sha512>(period, digits, &decoded, time)),
         _ => Err(OtpError::UnsupportedAlgorithm),
     }
-}
-
-pub fn encrypt(code: &str, password: &str) -> String {
-    let mc = new_magic_crypt!(password.trim(), 256);
-    mc.encrypt_str_to_base64(code)
-}
-
-pub fn decrypt(encrypted_code: &str, password: &str) -> Result<String, OtpError> {
-    let mc = new_magic_crypt!(password.trim(), 256);
-    mc.decrypt_base64_to_string(encrypted_code)
-        .map_err(|_| OtpError::DecryptionFailed)
 }
 
 #[cfg(test)]

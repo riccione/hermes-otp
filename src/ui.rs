@@ -1,21 +1,18 @@
-use crate::cmd::print_table;
-use crate::models::Record;
+use crate::cmd::{Row, print_table};
 use console::Term;
 use std::sync::mpsc;
 use std::thread;
 use std::time::Duration;
 
-pub(crate) struct Table<'a> {
-    filtered: &'a [&'a Record],
-    pass: &'a String,
+pub(crate) struct Table<'a, 'b> {
+    rows: &'a [Row<'b>],
     is_single_alias: bool,
 }
 
-impl<'a> Table<'a> {
-    pub fn new(filtered: &'a [&Record], pass: &'a String, is_single_alias: bool) -> Self {
+impl<'a, 'b> Table<'a, 'b> {
+    pub fn new(rows: &'a [Row<'b>], is_single_alias: bool) -> Self {
         Table {
-            filtered,
-            pass,
+            rows,
             is_single_alias,
         }
     }
@@ -33,7 +30,7 @@ impl<'a> Table<'a> {
             }
         });
 
-        print_table(self.filtered, self.pass, self.is_single_alias, false);
+        print_table(self.rows, self.is_single_alias, false);
         eprintln!("Press any key to exit");
         let _ = err.move_cursor_up(1);
 
@@ -53,18 +50,18 @@ impl<'a> Table<'a> {
                 Err(mpsc::RecvTimeoutError::Timeout) => {}
             }
 
-            if self.is_single_alias && self.filtered.len() == 1 {
+            if self.is_single_alias && self.rows.len() == 1 {
                 let _ = output.move_cursor_up(1);
                 let _ = err.move_cursor_up(1);
             } else {
-                let _ = output.move_cursor_up(self.filtered.len() + 2);
+                let _ = output.move_cursor_up(self.rows.len() + 2);
             }
-            print_table(self.filtered, self.pass, self.is_single_alias, false);
+            print_table(self.rows, self.is_single_alias, false);
         }
     }
 }
 
-impl<'a> Drop for Table<'a> {
+impl<'a, 'b> Drop for Table<'a, 'b> {
     fn drop(&mut self) {
         // Safe exit (also works in case of panic)
         let term = Term::stdout();

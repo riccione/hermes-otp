@@ -211,3 +211,66 @@ fn perform_backup(path: &Path, extension: &str) -> io::Result<PathBuf> {
 pub fn create_routine_backup(path: &Path) -> io::Result<PathBuf> {
     perform_backup(path, "bak")
 }
+
+/// Writes `data` atomically: a temp file in the same directory is written,
+/// flushed and renamed over `path`, so a crash cannot truncate the codex.
+pub fn overwrite_file_atomic(path: &Path, data: &str) -> io::Result<()> {
+    let content = format!("{}\n", data.trim());
+
+    let file_name = path
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_else(|| FILE_CODEX.to_string());
+    let tmp = path.with_file_name(format!(".{file_name}.{}.tmp", std::process::id()));
+
+    let result = (|| -> io::Result<()> {
+        let mut options = OpenOptions::new();
+        options.write(true).create(true).truncate(true);
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.mode(0o600);
+        }
+
+        let mut file = options.open(&tmp)?;
+        file.write_all(content.as_bytes())?;
+        file.sync_all()?;
+        drop(file);
+
+        secure_file(&tmp)?;
+        std::fs::rename(&tmp, path)?;
+        secure_codex_paths(path)
+    })();
+
+    if result.is_err() {
+        let _ = std::fs::remove_file(&tmp);
+    }
+
+    result
+}
+
+/// Copies the codex to `<name>.pre-v2.bak` before the first v2 migration.
+///
+/// The snapshot is only created when it does not exist yet, so repeated or
+/// partial migrations never overwrite the original v1 vault.
+pub fn backup_pre_v2(path: &Path) -> io::Result<Option<PathBuf>> {
+    if !path.exists() {
+        return Err(io::Error::new(
+            io::ErrorKind::NotFound,
+            "Error: No Codex file found to backup.",
+        ));
+    }
+
+    let mut backup_path = path.to_path_buf();
+    backup_path.set_extension("pre-v2.bak");
+
+    if backup_path.exists() {
+        return Ok(None);
+    }
+
+    std::fs::copy(path, &backup_path)?;
+    secure_file(&backup_path)?;
+
+    Ok(Some(backup_path))
+}

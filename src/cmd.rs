@@ -1,4 +1,5 @@
 use crate::args::OutputFormat;
+use crate::crypto;
 use crate::error::AppError;
 use crate::file;
 use crate::models::Record;
@@ -7,7 +8,7 @@ use crate::otpauth::OtpAuth;
 use crate::ui::Table;
 use data_encoding::BASE32_NOPAD;
 use nucleo_matcher::{Config, Utf32Str};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 // Shown in place of the code when a record cannot be decrypted or the secret
 // is not valid base32.
@@ -86,7 +87,8 @@ pub fn add(
     let secret = if *is_unencrypt {
         clean_code.to_string()
     } else {
-        otp::encrypt(&clean_code.to_string(), &get_effective_password(password)?)
+        crypto::encrypt_v2(&clean_code, &get_effective_password(password)?)
+            .map_err(|e| e.as_str().to_string())?
     };
 
     // serialize and save
@@ -154,7 +156,7 @@ pub fn update_code(
         let p = pass
             .as_ref()
             .ok_or("Incorrect password. Nothing was changed.")?;
-        otp::decrypt(&existing.secret, p)
+        decrypt_secret(&existing.secret, p)
             .map_err(|_| "Incorrect password. Nothing was changed.".to_string())?;
     }
 
@@ -212,44 +214,52 @@ pub fn ls(
     exact_match: bool,
     fuzzy: bool,
 ) -> Result<(), AppError> {
-    let records = file::read_codex(path)?;
+    let mut records = file::read_codex(path)?;
 
-    // apply search filter
-    let filtered: Vec<&Record> = if let Some(filter) = alias_filter {
+    // Indices of the matching records, in display order.
+    let matched: Vec<usize> = if let Some(filter) = alias_filter {
         if fuzzy {
             let mut matcher = nucleo_matcher::Matcher::new(Config::DEFAULT);
 
-            let mut scored: Vec<(u32, &Record)> = records
+            let mut scored: Vec<(u32, usize)> = records
                 .iter()
-                .filter_map(|r| {
+                .enumerate()
+                .filter_map(|(index, r)| {
                     let mut buf = Vec::new();
                     let haystack = Utf32Str::new(&r.alias, &mut buf);
                     let mut fbuf = Vec::new();
                     let needle = Utf32Str::new(filter, &mut fbuf);
                     matcher
                         .fuzzy_match(haystack, needle)
-                        .map(|score| (score as u32, r))
+                        .map(|score| (score as u32, index))
                 })
                 .collect();
 
             scored.sort_by_key(|b| std::cmp::Reverse(b.0));
-            scored.into_iter().map(|(_, r)| r).collect()
+            scored.into_iter().map(|(_, index)| index).collect()
         } else if exact_match {
             // exact match is case-sensitive, like remove/rename/update
-            records.iter().filter(|r| r.alias == *filter).collect()
+            records
+                .iter()
+                .enumerate()
+                .filter(|(_, r)| r.alias == *filter)
+                .map(|(index, _)| index)
+                .collect()
         } else {
             // partial match is case-insensitive
             let filter_lower = filter.to_lowercase();
             records
                 .iter()
-                .filter(|r| r.alias.to_lowercase().contains(&filter_lower))
+                .enumerate()
+                .filter(|(_, r)| r.alias.to_lowercase().contains(&filter_lower))
+                .map(|(index, _)| index)
                 .collect()
         }
     } else {
-        records.iter().collect()
+        (0..records.len()).collect()
     };
 
-    if filtered.is_empty() {
+    if matched.is_empty() {
         return Err(if let Some(filter) = alias_filter {
             if exact_match {
                 format!("No record found with exact alias '{}'", filter)
@@ -262,20 +272,72 @@ pub fn ls(
         .into());
     }
 
-    let needs_password = !is_unencrypt && filtered.iter().any(|r| !r.is_unencrypted);
+    let needs_password =
+        !is_unencrypt && matched.iter().any(|&index| !records[index].is_unencrypted);
 
     let pass = needs_password
         .then(|| get_effective_password(password))
         .transpose()?
         .unwrap_or_default();
 
+    // Decrypt each matched record exactly once, migrating legacy payloads in
+    // place. This keeps Argon2 out of the render and live-redraw paths.
+    let mut plaintext: Vec<Option<String>> = Vec::with_capacity(matched.len());
+    let mut decrypt_errors: Vec<Option<String>> = Vec::with_capacity(matched.len());
+    let mut migrated = false;
+
+    for &index in &matched {
+        let record = &mut records[index];
+
+        if is_unencrypt || record.is_unencrypted {
+            plaintext.push(Some(record.secret.clone()));
+            decrypt_errors.push(None);
+            continue;
+        }
+
+        match decrypt_and_migrate(record, &pass, &mut migrated) {
+            Ok(secret) => {
+                plaintext.push(Some(secret));
+                decrypt_errors.push(None);
+            }
+            Err(e) => {
+                plaintext.push(None);
+                decrypt_errors.push(Some(e.as_str().to_string()));
+            }
+        }
+    }
+
+    if migrated {
+        match save_migrated(path, &records) {
+            Ok(_) => {
+                if !quiet {
+                    eprintln!(
+                        "Migrated records to the v2 format; backup at {}",
+                        path.with_extension("pre-v2.bak").display()
+                    );
+                }
+            }
+            Err(e) => eprintln!("Warning: could not write the migrated codex: {e}"),
+        }
+    }
+
+    let rows: Vec<Row> = matched
+        .iter()
+        .enumerate()
+        .map(|(position, &index)| Row {
+            record: &records[index],
+            secret: plaintext[position].as_deref(),
+            error: decrypt_errors[position].as_deref(),
+        })
+        .collect();
+
     match format {
-        OutputFormat::Json => print_json(&filtered, &pass, alias_filter.is_some()),
+        OutputFormat::Json => print_json(&rows, alias_filter.is_some()),
         OutputFormat::Table => {
             if quiet {
-                print_table(&filtered, &pass, alias_filter.is_some(), quiet);
+                print_table(&rows, alias_filter.is_some(), quiet);
             } else {
-                let table = Table::new(&filtered, &pass, alias_filter.is_some());
+                let table = Table::new(&rows, alias_filter.is_some());
                 table.render();
             }
         }
@@ -283,15 +345,15 @@ pub fn ls(
 
     // A record that could not produce a code is a failure, even though the
     // output was already rendered. Report it so scripts can react.
-    let failed: Vec<&str> = filtered
+    let failed: Vec<&str> = rows
         .iter()
-        .filter(|r| get_otp_display(r, &pass).is_err())
-        .map(|r| r.alias.as_str())
+        .filter(|row| row.otp().is_err())
+        .map(|row| row.record.alias.as_str())
         .collect();
 
     if !failed.is_empty() {
         let aliases = failed.join(", ");
-        let total = filtered.len();
+        let total = rows.len();
 
         return if failed.len() == total {
             Err(AppError::from(format!(
@@ -311,26 +373,77 @@ pub fn ls(
     Ok(())
 }
 
-fn get_otp_display(record: &Record, pass: &str) -> Result<String, otp::OtpError> {
-    let secret = if record.is_unencrypted {
-        Ok(record.secret.clone())
-    } else {
-        otp::decrypt(&record.secret, pass)
-    };
-
-    secret.and_then(|s| {
-        otp::generate_otp(
-            &s,
-            &record.algorithm,
-            record.digits as u32,
-            record.period as u64,
-        )
-    })
+/// A matched record together with its decrypted secret, or a failure reason.
+pub(crate) struct Row<'a> {
+    record: &'a Record,
+    secret: Option<&'a str>,
+    error: Option<&'a str>,
 }
 
-/// Renders the OTP cell of a record, falling back to an error marker.
-fn otp_cell(record: &Record, pass: &str) -> String {
-    get_otp_display(record, pass).unwrap_or_else(|_| OTP_ERROR_TEXT.to_string())
+impl Row<'_> {
+    /// Generates the current code for this row.
+    fn otp(&self) -> Result<String, &str> {
+        match (self.secret, self.error) {
+            (Some(secret), _) => otp::generate_otp(
+                secret,
+                &self.record.algorithm,
+                self.record.digits as u32,
+                self.record.period as u64,
+            )
+            .map_err(|e| e.as_str()),
+            (None, Some(error)) => Err(error),
+            (None, None) => Err(OTP_ERROR_TEXT),
+        }
+    }
+
+    /// Renders the OTP cell of the row, falling back to an error marker.
+    fn cell(&self) -> String {
+        self.otp().unwrap_or_else(|_| OTP_ERROR_TEXT.to_string())
+    }
+}
+
+/// Decrypts a record's secret, accepting both legacy and v2 payloads.
+fn decrypt_secret(secret: &str, password: &str) -> Result<String, crypto::CryptoError> {
+    if crypto::is_v2(secret) {
+        crypto::decrypt_v2(secret, password)
+    } else {
+        crypto::decrypt_legacy(secret, password)
+    }
+}
+
+/// Decrypts `record`, upgrading a legacy payload to v2 when necessary.
+fn decrypt_and_migrate(
+    record: &mut Record,
+    password: &str,
+    migrated: &mut bool,
+) -> Result<String, crypto::CryptoError> {
+    if crypto::is_v2(&record.secret) {
+        return crypto::decrypt_v2(&record.secret, password);
+    }
+
+    let secret = crypto::decrypt_legacy(&record.secret, password)?;
+    let upgraded = crypto::encrypt_v2(&secret, password)?;
+
+    record.secret = upgraded;
+    *migrated = true;
+
+    Ok(secret)
+}
+
+/// Snapshots the codex once and writes the migrated records atomically.
+fn save_migrated(path: &Path, records: &[Record]) -> Result<Option<PathBuf>, String> {
+    let backup = file::backup_pre_v2(path).map_err(|e| format!("backup failed: {e}"))?;
+
+    let lines: Vec<String> = records
+        .iter()
+        .map(serde_json::to_string)
+        .collect::<Result<Vec<String>, serde_json::Error>>()
+        .map_err(|e| format!("Serialization error: {e}"))?;
+
+    let content = lines.join("\n") + "\n";
+    file::overwrite_file_atomic(path, &content).map_err(|e| format!("write failed: {e}"))?;
+
+    Ok(backup)
 }
 
 /// Renders the countdown bar for `rem` seconds out of `period`.
@@ -343,12 +456,12 @@ fn progress_bar(rem: u64, period: u64, width: usize) -> String {
     format!("[{0}{1}]", "#".repeat(filled), ".".repeat(empty))
 }
 
-pub fn print_table(records: &[&Record], pass: &str, is_single_alias: bool, quiet: bool) {
-    if is_single_alias && records.len() == 1 {
-        let record = records[0];
-        let otp = otp_cell(record, pass);
+pub(crate) fn print_table(rows: &[Row], is_single_alias: bool, quiet: bool) {
+    if is_single_alias && rows.len() == 1 {
+        let row = &rows[0];
+        let otp = row.cell();
         if !quiet {
-            let period = record.period as u64;
+            let period = row.record.period as u64;
             let rem = otp::get_remaining_seconds(period);
             let bar = progress_bar(rem, period, 20);
             eprintln!("{0} {1: <3} remaining", bar, rem.to_string() + "s");
@@ -357,9 +470,9 @@ pub fn print_table(records: &[&Record], pass: &str, is_single_alias: bool, quiet
     } else {
         println!("{0: <15} | {1: <10} | {2: <4}", "Alias", "OTP", "Rem");
         println!("{:-<15}-|-{:-<10}-|-{:-<4}", "", "", "");
-        for r in records {
-            let otp = otp_cell(r, pass);
-            let period = r.period as u64;
+        for row in rows {
+            let otp = row.cell();
+            let period = row.record.period as u64;
             let rem = otp::get_remaining_seconds(period);
             let bar = if quiet {
                 String::new()
@@ -368,7 +481,7 @@ pub fn print_table(records: &[&Record], pass: &str, is_single_alias: bool, quiet
             };
             println!(
                 "{0: <15} | {1: <10} | {2: <4} {3}",
-                r.alias,
+                row.record.alias,
                 otp,
                 rem.to_string() + "s",
                 bar
@@ -377,20 +490,20 @@ pub fn print_table(records: &[&Record], pass: &str, is_single_alias: bool, quiet
     }
 }
 
-fn record_to_json(record: &Record, pass: &str) -> serde_json::Value {
-    let rem = otp::get_remaining_seconds(record.period as u64);
+fn row_to_json(row: &Row) -> serde_json::Value {
+    let rem = otp::get_remaining_seconds(row.record.period as u64);
 
-    let (otp, error) = match get_otp_display(record, pass) {
+    let (otp, error) = match row.otp() {
         Ok(otp) => (otp, None),
-        Err(e) => (OTP_ERROR_TEXT.to_string(), Some(e.as_str())),
+        Err(e) => (OTP_ERROR_TEXT.to_string(), Some(e)),
     };
 
     let mut entry = serde_json::json!({
-        "alias": record.alias,
+        "alias": row.record.alias,
         "otp": otp,
         "remaining_secs": rem,
-        "is_encrypted": !record.is_unencrypted,
-        "created_at": record.created_at
+        "is_encrypted": !row.record.is_unencrypted,
+        "created_at": row.record.created_at
     });
 
     // only present on failures, so successful entries stay unchanged
@@ -401,10 +514,10 @@ fn record_to_json(record: &Record, pass: &str) -> serde_json::Value {
     entry
 }
 
-/// Prints records as JSON. A single alias that matches exactly one record is
+/// Prints rows as JSON. A single alias that matches exactly one record is
 /// printed as an object, so `jq .otp` works without indexing.
-fn print_json(records: &[&Record], pass: &str, single: bool) {
-    let entries: Vec<serde_json::Value> = records.iter().map(|r| record_to_json(r, pass)).collect();
+fn print_json(rows: &[Row], single: bool) {
+    let entries: Vec<serde_json::Value> = rows.iter().map(row_to_json).collect();
 
     let output = if single && entries.len() == 1 {
         entries[0].clone()
@@ -468,7 +581,8 @@ pub fn add_from_otpauth(
     let secret = if *is_unencrypt {
         parsed.secret.clone()
     } else {
-        otp::encrypt(&parsed.secret, &get_effective_password(password)?)
+        crypto::encrypt_v2(&parsed.secret, &get_effective_password(password)?)
+            .map_err(|e| e.as_str().to_string())?
     };
 
     let record = Record {
@@ -535,7 +649,8 @@ pub fn add_batch(
         let secret = if *is_unencrypt {
             parsed.secret.clone()
         } else {
-            otp::encrypt(&parsed.secret, pass.as_ref().unwrap())
+            crypto::encrypt_v2(&parsed.secret, pass.as_ref().unwrap())
+                .map_err(|e| e.as_str().to_string())?
         };
 
         let record = Record {

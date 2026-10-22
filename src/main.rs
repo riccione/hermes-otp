@@ -2,6 +2,7 @@ use std::path::PathBuf;
 
 mod args;
 mod cmd;
+mod crypto;
 mod error;
 mod file;
 mod models;

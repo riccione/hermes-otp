@@ -41,9 +41,13 @@ lto = true
 opt-level = "z"
 
 [dependencies]
+argon2 = "0.6"
+base64 = "0.23"
+chacha20poly1305 = "0.11"
 clap = { version = "4.6", features = ["derive"] }
 data-encoding = "2.11"
 dirs = "7.0"
+getrandom = "0.4"
 magic-crypt = "5.0"
 rpassword = "7.5"
 serde = { version = "1.0", features = ["derive"] }

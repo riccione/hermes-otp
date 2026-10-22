@@ -1,9 +1,76 @@
+## [0.8.0] - 2026-10-22
+
+### Documentation
+
+- *(readme)* Document the new encryption and migration
+- *(readme)* Document the passwd command
+
+### Features
+
+- *(crypto)* Replace magic-crypt with Argon2id + XChaCha20-Poly1305
+- *(cli)* Add passwd command for per-record password rotation
+
+### Miscellaneous Tasks
+
+- Add musl target to rust-toolchain and bump release workflow
+
+### Testing
+
+- Cover v2 crypto and transparent legacy migration
+- Cover passwd rotation and edge cases
+## [ci/update-release-ci] - 2026-10-21
+
+### Bug Fixes
+
+- *(ls)* Make --exact flag case-sensitive
+- *(cmd)* Exit non-zero when a code cannot be produced
+- *(cmd)* Verify password before update replaces a secret
+- *(cmd)* Verify the record password before update replaces it
+
+### Documentation
+
+- Clarify --exact flag is case-sensitive
+- *(ls)* Add help message for --exact flag
+- *(ls)* Add short and long help for --quiet flag
+- Update README for --quiet flag description
+- *(readme)* Document independent record encryption
+- *(readme)* Document file permissions
+- *(readme)* Document single-object vs array JSON output
+- *(readme)* Document supported otpauth parameters
+- *(readme)* Document add parameter flags
+- Rewrite README for launch
+
+### Features
+
+- *(file)* Restrict codex, backup and export to the owner
+- *(ls)* Emit a JSON object for a single alias match
+- *(otp)* Honor per-record algorithm, digits and period
+- *(otpauth)* Validate algorithm, digits and period on import
+- *(cli)* Add --algorithm, --digits and --period to add
+
+### Miscellaneous Tasks
+
+- Add pull request template
+
+### Refactor
+
+- *(otpauth)* Reuse the shared parameter validator
+
+### Testing
+
+- Add exit-code and update-verification tests
+- Add update password verification tests
+- Assert codex, backup and export permissions
+- Cover single-object and multi-match JSON shapes
+- Cover RFC 6238 vectors and import validation
+- Cover custom add parameters and update preservation
 ## [0.7.2] - 2026-10-02
 
 ### Miscellaneous Tasks
 
 - *(ci)* Update reusable release workflow
 - *(ci)* Pin release workflow to merged version
+- Release hermes-otp version 0.7.2
 ## [0.7.1] - 2026-10-02
 
 ### Miscellaneous Tasks

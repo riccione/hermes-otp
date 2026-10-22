@@ -221,6 +221,7 @@ trailing whitespace is significant.
 | `add --otpauth <URI>` | Add from an `otpauth://` URI. |
 | `add --import <FILE>` | Batch import URIs, one per line. |
 | `update <ALIAS> -c <CODE>` | Replace a record's secret after verifying its password. |
+| `passwd <ALIAS>` | Change the encryption password for one record. |
 | `remove <ALIAS>` | Remove a record. |
 | `rename <OLD> <NEW>` | Rename an alias. |
 | `ls [ALIAS]` | List codes; a partial match filters, `--exact` is case-sensitive. |
@@ -300,6 +301,22 @@ The JSON format is an array of records:
 `export` writes each secret exactly as stored, so v2 records stay `v2$…`
 payloads: a backup is only restorable with the same password, and older
 binaries cannot read v2 records.
+
+### Change a record's password
+
+```sh
+# Interactive prompts (current, then new twice)
+hermes-otp passwd github
+
+# Non-interactive
+hermes-otp passwd github --password "$OLD" --new-password "$NEW"
+```
+
+`passwd` verifies the current password, re-encrypts the secret with
+Argon2id + XChaCha20-Poly1305, and writes the vault atomically after taking
+the routine `codex.bak` snapshot. Records stored in the legacy format are
+upgraded to v2; unencrypted records are rejected because they have no
+password to rotate.
 
 </details>
 

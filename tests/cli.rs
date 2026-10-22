@@ -1524,3 +1524,185 @@ fn tampered_v2_record_reports_authentication_failure() -> Result<(), Box<dyn std
 
     Ok(())
 }
+
+#[test]
+fn passwd_rotates_the_password() -> Result<(), Box<dyn std::error::Error>> {
+    let file = NamedTempFile::new()?;
+    let path = file.path();
+
+    hermes(path)
+        .arg("add")
+        .args(["secure", "-c", CODE, "--password", "old-pass"])
+        .assert()
+        .success();
+
+    // add() takes its own backup; drop it so we only observe passwd's
+    let _ = std::fs::remove_file(path.with_extension("bak"));
+
+    hermes(path)
+        .arg("passwd")
+        .args([
+            "secure",
+            "--password",
+            "old-pass",
+            "--new-password",
+            "new-pass",
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(
+            "Password updated successfully for secure.",
+        ));
+
+    // the new password works
+    hermes(path)
+        .arg("ls")
+        .args(["secure", "-q", "--password", "new-pass"])
+        .assert()
+        .success()
+        .stdout(predicate::str::is_match("^[0-9]{6}")?);
+
+    // the old password no longer does
+    hermes(path)
+        .arg("ls")
+        .args(["secure", "-q", "--password", "old-pass"])
+        .assert()
+        .failure();
+
+    assert!(
+        path.with_extension("bak").exists(),
+        "routine backup should exist"
+    );
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mode = std::fs::metadata(path)?.permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600, "codex must stay owner-only");
+    }
+
+    Ok(())
+}
+
+#[test]
+fn passwd_rejects_wrong_current_password() -> Result<(), Box<dyn std::error::Error>> {
+    let file = NamedTempFile::new()?;
+    let path = file.path();
+
+    hermes(path)
+        .arg("add")
+        .args(["secure", "-c", CODE, "--password", "old-pass"])
+        .assert()
+        .success();
+    let before = std::fs::read_to_string(path)?;
+    let _ = std::fs::remove_file(path.with_extension("bak"));
+
+    hermes(path)
+        .arg("passwd")
+        .args([
+            "secure",
+            "--password",
+            "wrong",
+            "--new-password",
+            "new-pass",
+        ])
+        .assert()
+        .failure()
+        .code(1)
+        .stderr(predicate::str::contains(
+            "Incorrect password. Nothing was changed.",
+        ));
+
+    assert_eq!(
+        std::fs::read_to_string(path)?,
+        before,
+        "a failed rotation must not modify the codex"
+    );
+    assert!(!path.with_extension("bak").exists());
+
+    Ok(())
+}
+
+#[test]
+fn passwd_rejects_unencrypted_records() -> Result<(), Box<dyn std::error::Error>> {
+    let file = NamedTempFile::new()?;
+    let path = file.path();
+
+    hermes(path)
+        .arg("add")
+        .args(["plain", "-c", CODE, "-u"])
+        .assert()
+        .success();
+    let before = std::fs::read_to_string(path)?;
+
+    hermes(path)
+        .arg("passwd")
+        .args(["plain", "--password", "a", "--new-password", "b"])
+        .assert()
+        .failure()
+        .code(1)
+        .stderr(predicate::str::contains(
+            "Cannot change password of an unencrypted record.",
+        ));
+
+    assert_eq!(std::fs::read_to_string(path)?, before);
+
+    Ok(())
+}
+
+#[test]
+fn passwd_upgrades_legacy_records() -> Result<(), Box<dyn std::error::Error>> {
+    let file = NamedTempFile::new()?;
+    let path = file.path();
+
+    let record = v1_record("legacy", &legacy_ciphertext(CODE, "old-pass"), 1);
+    std::fs::write(path, format!("{}\n", serde_json::to_string(&record)?))?;
+
+    hermes(path)
+        .arg("passwd")
+        .args([
+            "legacy",
+            "--password",
+            "old-pass",
+            "--new-password",
+            "new-pass",
+        ])
+        .assert()
+        .success();
+
+    assert!(
+        std::fs::read_to_string(path)?.contains("v2$"),
+        "legacy record should be upgraded to v2"
+    );
+
+    hermes(path)
+        .arg("ls")
+        .args(["legacy", "-q", "--password", "new-pass"])
+        .assert()
+        .success()
+        .stdout(predicate::str::is_match("^[0-9]{6}")?);
+
+    hermes(path)
+        .arg("ls")
+        .args(["legacy", "-q", "--password", "old-pass"])
+        .assert()
+        .failure();
+
+    Ok(())
+}
+
+#[test]
+fn passwd_rejects_unknown_alias() -> Result<(), Box<dyn std::error::Error>> {
+    let file = NamedTempFile::new()?;
+    let path = file.path();
+
+    hermes(path)
+        .arg("passwd")
+        .args(["nope", "--password", "a", "--new-password", "b"])
+        .assert()
+        .failure()
+        .code(1)
+        .stderr(predicate::str::contains("Record not found."));
+
+    Ok(())
+}

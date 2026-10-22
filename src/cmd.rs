@@ -176,6 +176,83 @@ pub fn update_code(
     Ok(())
 }
 
+/// Changes the encryption password of a single record.
+pub fn passwd(
+    path: &Path,
+    alias: &str,
+    current: &Option<String>,
+    new: &Option<String>,
+) -> Result<(), String> {
+    let mut records = file::read_codex(path)?;
+
+    // exact, case-sensitive matching, like update/remove/rename
+    let index = records
+        .iter()
+        .position(|r| r.alias == *alias)
+        .ok_or("Record not found.")?;
+
+    if records[index].is_unencrypted {
+        return Err("Cannot change password of an unencrypted record.".into());
+    }
+
+    let current_password = resolve_current_password(current)?;
+    let plaintext = decrypt_secret(&records[index].secret, &current_password)
+        .map_err(|_| "Incorrect password. Nothing was changed.".to_string())?;
+
+    let new_password = match new {
+        Some(password) => password.clone(),
+        None => prompt_new_password()?,
+    };
+
+    // never magic-crypt: rotations always store the authenticated v2 format
+    records[index].secret =
+        crypto::encrypt_v2(&plaintext, &new_password).map_err(|e| e.as_str().to_string())?;
+
+    save_records_routine(path, &records)?;
+
+    println!("Password updated successfully for {alias}.");
+    Ok(())
+}
+
+fn resolve_current_password(current: &Option<String>) -> Result<String, String> {
+    current
+        .as_deref()
+        .map(String::from)
+        .or_else(|| std::env::var("HERMES_OTP_PASSWORD").ok())
+        .map(Ok)
+        .unwrap_or_else(|| {
+            rpassword::prompt_password("Enter current password: ")
+                .map_err(|e| format!("TTY error: {e}"))
+        })
+}
+
+fn prompt_new_password() -> Result<String, String> {
+    let first = rpassword::prompt_password("Enter new password: ")
+        .map_err(|e| format!("TTY error: {e}"))?;
+    let confirmation = rpassword::prompt_password("Confirm new password: ")
+        .map_err(|e| format!("TTY error: {e}"))?;
+
+    if first != confirmation {
+        return Err("Passwords do not match.".to_string());
+    }
+
+    Ok(first)
+}
+
+/// Writes all records after taking the routine `codex.bak` snapshot.
+fn save_records_routine(path: &Path, records: &[Record]) -> Result<(), String> {
+    file::create_routine_backup(path).map_err(|e| format!("Could not create backup: {e}"))?;
+
+    let lines: Vec<String> = records
+        .iter()
+        .map(serde_json::to_string)
+        .collect::<Result<Vec<String>, serde_json::Error>>()
+        .map_err(|e| format!("Serialization error: {e}"))?;
+
+    let content = lines.join("\n") + "\n";
+    file::overwrite_file_atomic(path, &content).map_err(|e| format!("Could not save changes: {e}"))
+}
+
 pub fn remove(path: &Path, alias: &str) -> Result<(), String> {
     file::create_routine_backup(path).map_err(|e| format!("Warning: Backup failed: {}", e))?;
 

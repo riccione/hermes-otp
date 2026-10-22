@@ -43,8 +43,9 @@ countdown bar and the prompt, so it is safe to pipe.
   standard exit codes.
 - **Full RFC 6238 support:** SHA-1, SHA-256 and SHA-512 records with custom
   digits (6–8) and periods (1–300 s), added directly or imported.
-- **Encrypted at rest:** each record is encrypted independently with AES-256-CBC;
-  the codex is `0600` and its directory is `0700`.
+- **Encrypted at rest:** each record is encrypted independently with
+  XChaCha20-Poly1305, keyed by Argon2id; the codex is `0600` and its directory
+  is `0700`.
 - **Single ~1 MB binary:** no runtime, no interpreter, no GPG dependency.
 - **Live when you want it, quiet when you don't:** an auto-refreshing view for
   humans and a strict non-interactive mode for machines.
@@ -53,7 +54,7 @@ countdown bar and the prompt, so it is safe to pipe.
 
 | Feature | hermes-otp | oathtool | totp-cli | dotp | pass-otp |
 |---|---|---|---|---|---|
-| Encrypted storage | Yes (AES-256-CBC) | No | Yes (age) | Yes (Fernet) | Yes (GPG) |
+| Encrypted storage | Yes (XChaCha20-Poly1305) | No | Yes (age) | Yes (Fernet) | Yes (GPG) |
 | **JSON output** | **Yes** | No | No | No | No |
 | **`otpauth://` import** | **Yes** | No | No (YAML only) | Yes | Yes |
 | **Custom algorithm/digits/period** | **Yes** | Yes (per call) | digits only | — | — |
@@ -170,6 +171,10 @@ half-empty result.
 
 We believe in being honest about cryptography.
 
+- **Authenticated encryption:** new records use **XChaCha20-Poly1305**, so a
+  tampered ciphertext is rejected instead of silently decrypting to garbage.
+- **Memory-hard key derivation:** keys come from **Argon2id** (19 MiB, 2
+  iterations) with a fresh random 16-byte salt per record.
 - **Per-record encryption:** every record is encrypted on its own, so one
   compromised password does not unlock the whole file.
 - **File permissions:** the codex is `0600`; the app's config directory is
@@ -179,13 +184,31 @@ We believe in being honest about cryptography.
 - **Passwords are never stored:** resolution order is `--password` →
   `HERMES_OTP_PASSWORD` → interactive prompt.
 
+### Automatic migration from the old format
+
+Records written by older releases use an unauthenticated AES-CBC format
+(`magic-crypt`, RUSTSEC-2024-0430). They are upgraded transparently the first
+time they are read:
+
+```sh
+hermes-otp ls github    # decrypts the legacy record and rewrites it as v2
+```
+
+Before rewriting, the vault is snapshotted once to `codex.pre-v2.bak` (mode
+`0600`); the routine `codex.bak` is left untouched, so you can roll back to an
+older release. Migration is per record because each record may use a different
+password — records that cannot be decrypted stay in the old format, and the
+command exits `3` if others succeeded.
+
+Passwords are used **exactly as provided** for the new format: leading and
+trailing whitespace is significant.
+
 ### Limitations to know
 
-- **Deterministic IV:** a fixed zero IV means identical secrets encrypt to
-  identical ciphertexts. Fine for local use, not for hostile multi-tenant
-  environments.
-- **No KDF:** the key is a direct SHA-256 hash of the password rather than a
-  memory-hard KDF such as Argon2. Use a strong, unique password.
+- **Legacy records remain in the old format** until they are read once. Run
+  `ls` against your records after upgrading to migrate them.
+- **No associated data:** ciphertexts are authenticated but not bound to their
+  alias.
 
 <details>
 <summary>Command reference</summary>
@@ -274,8 +297,9 @@ The JSON format is an array of records:
 ]
 ```
 
-`export` writes the secret exactly as stored, so ciphertext stays ciphertext: a
-backup is only restorable with the same password.
+`export` writes each secret exactly as stored, so v2 records stay `v2$…`
+payloads: a backup is only restorable with the same password, and older
+binaries cannot read v2 records.
 
 </details>
 

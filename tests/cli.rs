@@ -597,7 +597,7 @@ fn ls_json_reports_error_field() -> Result<(), Box<dyn std::error::Error>> {
     let entry = &json.as_array().unwrap()[0];
 
     // the failure is reported in a dedicated field
-    assert_eq!(entry["error"], "decryption failed");
+    assert_eq!(entry["error"], "authentication failed");
     // and the otp field still carries a visible marker
     assert!(entry["otp"].as_str().unwrap().contains("decryption failed"));
 
@@ -715,7 +715,7 @@ fn ls_json_single_alias_error_is_object() -> Result<(), Box<dyn std::error::Erro
     // the failure path keeps the object shape and reports the reason
     assert!(json.is_object(), "single alias must be a JSON object");
     assert_eq!(json["alias"], "aws");
-    assert_eq!(json["error"], "decryption failed");
+    assert_eq!(json["error"], "authentication failed");
 
     Ok(())
 }

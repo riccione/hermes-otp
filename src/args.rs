@@ -94,6 +94,17 @@ pub enum Commands {
         #[clap(flatten)]
         encryption: EncryptArgs,
     },
+    /// Change the encryption password for a record
+    Passwd {
+        /// Alias of the record
+        alias: String,
+        /// WARNING: Using this flag leaves the current password in shell history.
+        #[clap(long, verbatim_doc_comment)]
+        password: Option<String>,
+        /// WARNING: Using this flag leaves the new password in shell history.
+        #[clap(long, verbatim_doc_comment)]
+        new_password: Option<String>,
+    },
     /// Rename alias
     Rename {
         old_alias: String,

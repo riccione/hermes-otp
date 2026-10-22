@@ -122,6 +122,14 @@ fn run(command: Commands, codex_path: PathBuf) -> Result<(), error::AppError> {
             )?;
         }
 
+        Commands::Passwd {
+            alias,
+            password,
+            new_password,
+        } => {
+            cmd::passwd(&codex_path, &alias, &password, &new_password)?;
+        }
+
         Commands::Rename {
             old_alias,
             new_alias,

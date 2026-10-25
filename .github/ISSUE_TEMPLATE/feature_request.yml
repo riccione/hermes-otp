@@ -1,0 +1,39 @@
+name: Feature request
+description: A capability hermes-otp is missing.
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for suggesting improvements to `hermes-otp`! The most useful feature requests explain the use case clearly and describe how you envision using it from the command line.
+
+  - type: textarea
+    id: capability
+    attributes:
+      label: What is missing
+      description: What you are trying to accomplish, and what stops you from doing it today.
+    validations:
+      required: true
+
+  - type: input
+    id: cli-equivalent
+    attributes:
+      label: Suggested command or flag syntax
+      description: How you imagine invoking this feature.
+      placeholder: "hermes-otp export --format json"
+
+  - type: textarea
+    id: behaviour
+    attributes:
+      label: How it should behave
+      description: |
+        Details on expected output, configuration file changes, subcommands, flags,
+        or how it integrates with existing workflows.
+
+  - type: checkboxes
+    id: scope
+    attributes:
+      label: What does this affect?
+      options:
+        - label: It changes or adds data to the local secret store / configuration file
+        - label: It only affects command output or formatting, not stored data

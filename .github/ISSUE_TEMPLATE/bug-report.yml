@@ -1,0 +1,72 @@
+---
+name: Bug report
+description: Something in hermes-otp behaves differently from what you expected.
+labels: ["bug"]
+body:
+  - type: textarea
+    id: what-happens
+    attributes:
+      label: What happens
+      description: What command/flags you ran, and what hermes-otp did in response (including any errors).
+      placeholder: |
+        1. Ran `hermes-otp ls`
+        2. Received an error or incorrect code
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected instead
+      description: Describe what should have happened.
+      placeholder: "It should have outputted a valid 6-digit TOTP code."
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: hermes-otp --version
+      description: Output of `hermes-otp --version`
+      placeholder: "0.8.0"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating system
+      options:
+        - macOS (Apple Silicon)
+        - macOS (Intel)
+        - Windows
+        - Linux (musl)
+        - Linux
+    validations:
+      required: true
+
+  - type: input
+    id: os-version
+    attributes:
+      label: OS version
+      placeholder: "macOS 15.2 / Windows 11 24H2 / Ubuntu 24.04"
+
+  - type: dropdown
+    id: installation-method
+    attributes:
+      label: How did you install hermes-otp?
+      options:
+        - Cargo (`cargo install`)
+        - Pre-built binary (GitHub Releases)
+        - Built from source
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: console
+    attributes:
+      label: Terminal output / Logs
+      description: |
+        Run your command with debug logging enabled (e.g., `RUST_LOG=debug hermes-otp ...`) and paste the relevant output here.
+      render: text

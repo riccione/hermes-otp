@@ -15,6 +15,7 @@ jobs:
     uses: riccione/github-workflows/.github/workflows/rust-release.yml@2dc80fece2101332621adb1b38cf9a35cf158231
     permissions:
       contents: write
+      id-token: write
     with:
       bin_names: "hermes-otp"
       tag: ${{ github.ref_name }}

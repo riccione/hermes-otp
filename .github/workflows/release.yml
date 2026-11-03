@@ -12,7 +12,7 @@ permissions:
 
 jobs:
   release:
-    uses: riccione/github-workflows/.github/workflows/rust-release.yml@5dc873077d9ec45384ad9b41751c44dc555bcd0b
+    uses: riccione/github-workflows/.github/workflows/rust-release.yml@1249a989e5d9fbe23e35d554236fadd95f896176
     permissions:
       contents: write
       id-token: write

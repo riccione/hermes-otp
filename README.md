@@ -184,29 +184,33 @@ We believe in being honest about cryptography.
 - **Passwords are never stored:** resolution order is `--password` →
   `HERMES_OTP_PASSWORD` → interactive prompt.
 
-### Automatic migration from the old format
+### Upgrading from the legacy v1 format
 
-Records written by older releases use an unauthenticated AES-CBC format
-(`magic-crypt`, RUSTSEC-2024-0430). They are upgraded transparently the first
-time they are read:
+The `magic-crypt` AES-CBC format (RUSTSEC-2024-0430) was removed in v0.9.0.
+Records written by releases before v0.8.0 can no longer be read: commands that
+need the secret fail with an explicit error instead of falling back to the
+unauthenticated format, and the stored ciphertext is left untouched.
+
+Migrate **before** upgrading. Install v0.8.x, run `ls` once so every record is
+rewritten as v2, then upgrade:
 
 ```sh
-hermes-otp ls github    # decrypts the legacy record and rewrites it as v2
+cargo install hermes-otp --version 0.8.0
+hermes-otp ls
 ```
 
-Before rewriting, the vault is snapshotted once to `codex.pre-v2.bak` (mode
-`0600`); the routine `codex.bak` is left untouched, so you can roll back to an
-older release. Migration is per record because each record may use a different
-password — records that cannot be decrypted stay in the old format, and the
-command exits `3` if others succeeded.
+v0.8.x snapshots the vault to `codex.pre-v2.bak` (mode `0600`) before the
+first migration, so you can still roll back. Migration is per record because
+records may use different passwords; records that cannot be decrypted stay in
+the old format.
 
-Passwords are used **exactly as provided** for the new format: leading and
-trailing whitespace is significant.
+Passwords are used **exactly as provided**: leading and trailing whitespace is
+significant.
 
 ### Limitations to know
 
-- **Legacy records remain in the old format** until they are read once. Run
-  `ls` against your records after upgrading to migrate them.
+- **v1 records must be migrated with v0.8.x first.** There is no fallback
+  decryptor anymore.
 - **No associated data:** ciphertexts are authenticated but not bound to their
   alias.
 

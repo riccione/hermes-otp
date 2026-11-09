@@ -249,28 +249,3 @@ pub fn overwrite_file_atomic(path: &Path, data: &str) -> io::Result<()> {
 
     result
 }
-
-/// Copies the codex to `<name>.pre-v2.bak` before the first v2 migration.
-///
-/// The snapshot is only created when it does not exist yet, so repeated or
-/// partial migrations never overwrite the original v1 vault.
-pub fn backup_pre_v2(path: &Path) -> io::Result<Option<PathBuf>> {
-    if !path.exists() {
-        return Err(io::Error::new(
-            io::ErrorKind::NotFound,
-            "Error: No Codex file found to backup.",
-        ));
-    }
-
-    let mut backup_path = path.to_path_buf();
-    backup_path.set_extension("pre-v2.bak");
-
-    if backup_path.exists() {
-        return Ok(None);
-    }
-
-    std::fs::copy(path, &backup_path)?;
-    secure_file(&backup_path)?;
-
-    Ok(Some(backup_path))
-}

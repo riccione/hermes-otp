@@ -8,7 +8,7 @@ use crate::otpauth::OtpAuth;
 use crate::ui::Table;
 use data_encoding::BASE32_NOPAD;
 use nucleo_matcher::{Config, Utf32Str};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 // Shown in place of the code when a record cannot be decrypted or the secret
 // is not valid base32.
@@ -156,8 +156,7 @@ pub fn update_code(
         let p = pass
             .as_ref()
             .ok_or("Incorrect password. Nothing was changed.")?;
-        decrypt_secret(&existing.secret, p)
-            .map_err(|_| "Incorrect password. Nothing was changed.".to_string())?;
+        decrypt_user_secret(&existing.secret, p)?;
     }
 
     // Do the swap, keeping the record's OTP parameters.
@@ -196,15 +195,14 @@ pub fn passwd(
     }
 
     let current_password = resolve_current_password(current)?;
-    let plaintext = decrypt_secret(&records[index].secret, &current_password)
-        .map_err(|_| "Incorrect password. Nothing was changed.".to_string())?;
+    let plaintext = decrypt_user_secret(&records[index].secret, &current_password)?;
 
     let new_password = match new {
         Some(password) => password.clone(),
         None => prompt_new_password()?,
     };
 
-    // never magic-crypt: rotations always store the authenticated v2 format
+    // rotations always store the authenticated v2 format
     records[index].secret =
         crypto::encrypt_v2(&plaintext, &new_password).map_err(|e| e.as_str().to_string())?;
 
@@ -291,7 +289,7 @@ pub fn ls(
     exact_match: bool,
     fuzzy: bool,
 ) -> Result<(), AppError> {
-    let mut records = file::read_codex(path)?;
+    let records = file::read_codex(path)?;
 
     // Indices of the matching records, in display order.
     let matched: Vec<usize> = if let Some(filter) = alias_filter {
@@ -349,6 +347,25 @@ pub fn ls(
         .into());
     }
 
+    // The legacy v1 format was removed: fail before rendering instead of
+    // silently producing an empty or partial table.
+    if !is_unencrypt {
+        let legacy: Vec<&str> = matched
+            .iter()
+            .map(|&index| &records[index])
+            .filter(|record| !record.is_unencrypted && !crypto::is_v2(&record.secret))
+            .map(|record| record.alias.as_str())
+            .collect();
+
+        if !legacy.is_empty() {
+            return Err(AppError::from(format!(
+                "legacy v1 record(s) are no longer supported: {}. \
+                 Run hermes-otp 0.8.x to migrate them first.",
+                legacy.join(", ")
+            )));
+        }
+    }
+
     let needs_password =
         !is_unencrypt && matched.iter().any(|&index| !records[index].is_unencrypted);
 
@@ -357,14 +374,13 @@ pub fn ls(
         .transpose()?
         .unwrap_or_default();
 
-    // Decrypt each matched record exactly once, migrating legacy payloads in
-    // place. This keeps Argon2 out of the render and live-redraw paths.
+    // Decrypt each matched record exactly once. This keeps Argon2 out of the
+    // render and live-redraw paths.
     let mut plaintext: Vec<Option<String>> = Vec::with_capacity(matched.len());
     let mut decrypt_errors: Vec<Option<String>> = Vec::with_capacity(matched.len());
-    let mut migrated = false;
 
     for &index in &matched {
-        let record = &mut records[index];
+        let record = &records[index];
 
         if is_unencrypt || record.is_unencrypted {
             plaintext.push(Some(record.secret.clone()));
@@ -372,7 +388,7 @@ pub fn ls(
             continue;
         }
 
-        match decrypt_and_migrate(record, &pass, &mut migrated) {
+        match decrypt_secret(&record.secret, &pass) {
             Ok(secret) => {
                 plaintext.push(Some(secret));
                 decrypt_errors.push(None);
@@ -381,20 +397,6 @@ pub fn ls(
                 plaintext.push(None);
                 decrypt_errors.push(Some(e.as_str().to_string()));
             }
-        }
-    }
-
-    if migrated {
-        match save_migrated(path, &records) {
-            Ok(_) => {
-                if !quiet {
-                    eprintln!(
-                        "Migrated records to the v2 format; backup at {}",
-                        path.with_extension("pre-v2.bak").display()
-                    );
-                }
-            }
-            Err(e) => eprintln!("Warning: could not write the migrated codex: {e}"),
         }
     }
 
@@ -479,48 +481,22 @@ impl Row<'_> {
     }
 }
 
-/// Decrypts a record's secret, accepting both legacy and v2 payloads.
+/// Decrypts a v2 record, rejecting any payload in the removed v1 format.
 fn decrypt_secret(secret: &str, password: &str) -> Result<String, crypto::CryptoError> {
     if crypto::is_v2(secret) {
         crypto::decrypt_v2(secret, password)
     } else {
-        crypto::decrypt_legacy(secret, password)
+        Err(crypto::CryptoError::Legacy)
     }
 }
 
-/// Decrypts `record`, upgrading a legacy payload to v2 when necessary.
-fn decrypt_and_migrate(
-    record: &mut Record,
-    password: &str,
-    migrated: &mut bool,
-) -> Result<String, crypto::CryptoError> {
-    if crypto::is_v2(&record.secret) {
-        return crypto::decrypt_v2(&record.secret, password);
-    }
-
-    let secret = crypto::decrypt_legacy(&record.secret, password)?;
-    let upgraded = crypto::encrypt_v2(&secret, password)?;
-
-    record.secret = upgraded;
-    *migrated = true;
-
-    Ok(secret)
-}
-
-/// Snapshots the codex once and writes the migrated records atomically.
-fn save_migrated(path: &Path, records: &[Record]) -> Result<Option<PathBuf>, String> {
-    let backup = file::backup_pre_v2(path).map_err(|e| format!("backup failed: {e}"))?;
-
-    let lines: Vec<String> = records
-        .iter()
-        .map(serde_json::to_string)
-        .collect::<Result<Vec<String>, serde_json::Error>>()
-        .map_err(|e| format!("Serialization error: {e}"))?;
-
-    let content = lines.join("\n") + "\n";
-    file::overwrite_file_atomic(path, &content).map_err(|e| format!("write failed: {e}"))?;
-
-    Ok(backup)
+/// Like [`decrypt_secret`], but maps a wrong password to the user-facing
+/// message while keeping the legacy-format hint intact.
+fn decrypt_user_secret(secret: &str, password: &str) -> Result<String, String> {
+    decrypt_secret(secret, password).map_err(|e| match e {
+        crypto::CryptoError::Legacy => e.as_str().to_string(),
+        _ => "Incorrect password. Nothing was changed.".to_string(),
+    })
 }
 
 /// Renders the countdown bar for `rem` seconds out of `period`.

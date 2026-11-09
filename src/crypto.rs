@@ -1,7 +1,6 @@
 use argon2::{Algorithm, Argon2, Params, Version};
 use base64::{Engine as _, engine::general_purpose::STANDARD};
 use chacha20poly1305::{KeyInit, XChaCha20Poly1305, XNonce, aead::Aead};
-use magic_crypt::{MagicCryptTrait, new_magic_crypt};
 
 /// Prefix marking an authenticated v2 payload.
 pub const V2_PREFIX: &str = "v2$";
@@ -36,15 +35,17 @@ impl CryptoError {
             CryptoError::Random => "randomness unavailable",
             CryptoError::Base64 => "invalid base64",
             CryptoError::InvalidUtf8 => "invalid plaintext",
-            CryptoError::Legacy => "decryption failed",
+            CryptoError::Legacy => {
+                "legacy v1 format is no longer supported; run hermes-otp 0.8.x to migrate this record first"
+            }
         }
     }
 }
 
 /// True when `secret` is an authenticated v2 payload.
 ///
-/// Neither Base64 (legacy ciphertext) nor Base32 (plaintext) contain `$`, so
-/// the prefix is unambiguous.
+/// Neither Base64 (removed legacy ciphertext) nor Base32 (plaintext) contains
+/// `$`, so the prefix is unambiguous.
 pub fn is_v2(secret: &str) -> bool {
     secret.starts_with(V2_PREFIX)
 }
@@ -124,16 +125,6 @@ pub fn decrypt_v2(payload: &str, password: &str) -> Result<String, CryptoError> 
     String::from_utf8(plaintext).map_err(|_| CryptoError::InvalidUtf8)
 }
 
-/// Decrypts a legacy magic-crypt payload (crypto version 1).
-///
-/// The password is trimmed here on purpose: every existing v1 ciphertext was
-/// produced with a trimmed password, so trimming keeps old vaults readable.
-pub fn decrypt_legacy(ciphertext: &str, password: &str) -> Result<String, CryptoError> {
-    let mc = new_magic_crypt!(password.trim(), 256);
-    mc.decrypt_base64_to_string(ciphertext)
-        .map_err(|_| CryptoError::Legacy)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -207,17 +198,10 @@ mod tests {
     }
 
     #[test]
-    fn legacy_round_trips_and_trims_the_password() {
-        let mc = new_magic_crypt!("legacy-password", 256);
-        let legacy = mc.encrypt_str_to_base64(SECRET);
-
-        assert_eq!(
-            decrypt_legacy(&legacy, "  legacy-password  ").unwrap(),
-            SECRET
-        );
+    fn legacy_payloads_are_rejected() {
         assert!(matches!(
-            decrypt_legacy(&legacy, "wrong"),
-            Err(CryptoError::Legacy)
+            decrypt_v2("3q2+7w==", PASSWORD),
+            Err(CryptoError::InvalidFormat)
         ));
     }
 
@@ -225,8 +209,7 @@ mod tests {
     fn prefix_detection_is_unambiguous() {
         assert!(is_v2(&encrypt_v2(SECRET, PASSWORD).unwrap()));
 
-        let legacy = new_magic_crypt!("p", 256).encrypt_str_to_base64(SECRET);
-        assert!(!is_v2(&legacy));
+        assert!(!is_v2("3q2+7w=="));
         assert!(!is_v2(SECRET));
     }
 }

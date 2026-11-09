@@ -4,9 +4,9 @@ This document outlines the planned development and architectural changes for Her
 
 ## v0.9.0 (Next)
 *The "Cleanup" release. (Target: 1-2 months after v0.8.0).*
-- [ ] **Drop `magic-crypt` entirely:** Remove the insecure dependency and all legacy decryption logic.
-- [ ] **Remove `migrate` command:** It is no longer needed once v1 is dropped.
-- [ ] **Hard-fail on v1 records:** If a user skips v0.8.0, they will get a clear error instructing them to run v0.8.0 first to rescue their data.
+- [x] **Drop `magic-crypt` entirely:** Remove the insecure dependency and all legacy decryption logic.
+- [x] **Remove `migrate` command:** It is no longer needed once v1 is dropped.
+- [x] **Hard-fail on v1 records:** If a user skips v0.8.0, they will get a clear error instructing them to run v0.8.0 first to rescue their data.
 
 ## v1.0.0 (Future Architecture)
 *The "Performance & Ecosystem" release.*
@@ -22,4 +22,4 @@ This document outlines the planned development and architectural changes for Her
 - [ ] **Custom TUI Bindings:** Allow users to press `y` in the live UI to immediately copy the currently selected OTP.
 
 ---
-*Last updated: October 2026*
+*Last updated: November 2026*

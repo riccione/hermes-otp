@@ -1,24 +1,29 @@
-## [0.8.0] - 2026-10-22
+## [0.9.0] - 2026-11-09
+
+### Bug Fixes
+
+- *(ci)* Update reusable release workflow reference (#112)
 
 ### Documentation
 
-- *(readme)* Document the new encryption and migration
-- *(readme)* Document the passwd command
-
-### Features
-
-- *(crypto)* Replace magic-crypt with Argon2id + XChaCha20-Poly1305
-- *(cli)* Add passwd command for per-record password rotation
+- Add roadmap
+- Document the removal of the legacy v1 format
 
 ### Miscellaneous Tasks
 
-- Add musl target to rust-toolchain and bump release workflow
+- Add GitHub issue templates for bug reports and feature requests
+- Bump riccione/github-workflows/.github/workflows/rust-relese.yml
+- Grant OIDC token permission for release signing
+- Update reusable release workflow reference (composite checksum sign action) (#111)
 
-### Testing
+### Other
 
-- Cover v2 crypto and transparent legacy migration
-- Cover passwd rotation and edge cases
-## [ci/update-release-ci] - 2026-10-21
+- Remove the magic-crypt dependency #113
+
+### Refactor
+
+- [**breaking**] Drop the legacy v1 decryption pathway #114 #115
+## [0.8.0] - 2026-10-22
 
 ### Bug Fixes
 
@@ -39,6 +44,8 @@
 - *(readme)* Document supported otpauth parameters
 - *(readme)* Document add parameter flags
 - Rewrite README for launch
+- *(readme)* Document the new encryption and migration
+- *(readme)* Document the passwd command
 
 ### Features
 
@@ -47,10 +54,14 @@
 - *(otp)* Honor per-record algorithm, digits and period
 - *(otpauth)* Validate algorithm, digits and period on import
 - *(cli)* Add --algorithm, --digits and --period to add
+- *(crypto)* Replace magic-crypt with Argon2id + XChaCha20-Poly1305
+- *(cli)* Add passwd command for per-record password rotation
 
 ### Miscellaneous Tasks
 
 - Add pull request template
+- Add musl target to rust-toolchain and bump release workflow
+- Release hermes-otp version 0.8.0
 
 ### Refactor
 
@@ -64,6 +75,8 @@
 - Cover single-object and multi-match JSON shapes
 - Cover RFC 6238 vectors and import validation
 - Cover custom add parameters and update preservation
+- Cover v2 crypto and transparent legacy migration
+- Cover passwd rotation and edge cases
 ## [0.7.2] - 2026-10-02
 
 ### Miscellaneous Tasks

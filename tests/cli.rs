@@ -1334,17 +1334,12 @@ fn update_preserves_otp_parameters() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-fn legacy_ciphertext(secret: &str, password: &str) -> String {
-    use magic_crypt::{MagicCryptTrait, new_magic_crypt};
-
-    let mc = new_magic_crypt!(password.trim(), 256);
-    mc.encrypt_str_to_base64(secret)
-}
-
-fn v1_record(alias: &str, secret: &str, created_at: u64) -> serde_json::Value {
+/// A v1 record as written by hermes-otp <= 0.7.x. Its magic-crypt payload is
+/// no longer decryptable.
+fn legacy_record(alias: &str, created_at: u64) -> serde_json::Value {
     serde_json::json!({
         "alias": alias,
-        "secret": secret,
+        "secret": "3q2+7w==",
         "is_unencrypted": false,
         "algorithm": "sha1",
         "digits": 6,
@@ -1354,125 +1349,84 @@ fn v1_record(alias: &str, secret: &str, created_at: u64) -> serde_json::Value {
 }
 
 #[test]
-fn ls_migrates_legacy_records_to_v2() -> Result<(), Box<dyn std::error::Error>> {
+fn ls_rejects_legacy_records() -> Result<(), Box<dyn std::error::Error>> {
     let file = NamedTempFile::new()?;
     let path = file.path();
 
-    let legacy = legacy_ciphertext(CODE, PASSWORD);
-    let record = v1_record("legacy", &legacy, 1);
+    let record = legacy_record("legacy", 1);
     std::fs::write(path, format!("{}\n", serde_json::to_string(&record)?))?;
     let before = std::fs::read_to_string(path)?;
 
     hermes(path)
         .arg("ls")
-        .args(["legacy", "-q", "--password", PASSWORD])
-        .assert()
-        .success()
-        .stdout(predicate::str::is_match("^[0-9]{6}")?);
-
-    let after = std::fs::read_to_string(path)?;
-    assert!(after.contains("v2$"), "record should be migrated to v2");
-
-    // the routine .bak is untouched; a dedicated pre-v2 snapshot is created
-    let backup = path.with_extension("pre-v2.bak");
-    assert!(backup.exists(), "pre-v2 backup should exist");
-    assert_eq!(
-        std::fs::read_to_string(&backup)?,
-        before,
-        "pre-v2 backup must hold the original vault"
-    );
-
-    Ok(())
-}
-
-#[test]
-fn ls_wrong_password_leaves_legacy_record_untouched() -> Result<(), Box<dyn std::error::Error>> {
-    let file = NamedTempFile::new()?;
-    let path = file.path();
-
-    let legacy = legacy_ciphertext(CODE, PASSWORD);
-    let record = v1_record("legacy", &legacy, 1);
-    std::fs::write(path, format!("{}\n", serde_json::to_string(&record)?))?;
-    let before = std::fs::read_to_string(path)?;
-
-    hermes(path)
-        .arg("ls")
-        .args(["legacy", "--password", "wrong-password"])
+        .args(["legacy", "--password", PASSWORD])
         .assert()
         .failure()
-        .code(1);
+        .code(1)
+        .stderr(predicate::str::contains("legacy v1 record(s)"))
+        .stderr(predicate::str::contains("0.8.x"));
 
     assert_eq!(
         std::fs::read_to_string(path)?,
         before,
-        "a failed migration must not modify the codex"
+        "a rejected legacy record must not be rewritten"
     );
-    assert!(!path.with_extension("pre-v2.bak").exists());
 
     Ok(())
 }
 
 #[test]
-fn pre_v2_backup_survives_later_migrations() -> Result<(), Box<dyn std::error::Error>> {
-    let file = NamedTempFile::new()?;
-    let path = file.path();
-
-    let record_a = v1_record("a", &legacy_ciphertext(CODE, "pw-a"), 1);
-    let record_b = v1_record("b", &legacy_ciphertext(CODE, "pw-b"), 2);
-    let original = format!(
-        "{}\n{}\n",
-        serde_json::to_string(&record_a)?,
-        serde_json::to_string(&record_b)?
-    );
-    std::fs::write(path, &original)?;
-
-    // migrate the first record
-    hermes(path)
-        .arg("ls")
-        .args(["a", "-q", "--password", "pw-a"])
-        .assert()
-        .success();
-
-    let backup = path.with_extension("pre-v2.bak");
-    let first_snapshot = std::fs::read_to_string(&backup)?;
-    assert!(!first_snapshot.contains("v2$"));
-
-    // migrate the second record with its own password
-    hermes(path)
-        .arg("ls")
-        .args(["b", "-q", "--password", "pw-b"])
-        .assert()
-        .success();
-
-    assert_eq!(
-        std::fs::read_to_string(&backup)?,
-        first_snapshot,
-        "the original v1 snapshot must never be overwritten"
-    );
-    assert_eq!(first_snapshot, original);
-
-    Ok(())
-}
-
-#[test]
-fn plaintext_records_are_not_migrated() -> Result<(), Box<dyn std::error::Error>> {
+fn ls_filtered_alias_ignores_unselected_legacy_records() -> Result<(), Box<dyn std::error::Error>> {
     let file = NamedTempFile::new()?;
     let path = file.path();
 
     hermes(path)
         .arg("add")
-        .args(["plain", "-c", CODE, "-u"])
+        .args(["current", "-c", CODE, "--password", PASSWORD])
         .assert()
         .success();
+
+    let mut content = std::fs::read_to_string(path)?;
+    content.push_str(&format!(
+        "{}\n",
+        serde_json::to_string(&legacy_record("legacy", 2))?
+    ));
+    std::fs::write(path, content)?;
 
     hermes(path)
         .arg("ls")
-        .args(["plain", "-q"])
+        .args(["current", "-q", "--password", PASSWORD])
         .assert()
-        .success();
+        .success()
+        .stdout(predicate::str::is_match("^[0-9]{6}")?);
 
-    assert!(!std::fs::read_to_string(path)?.contains("v2$"));
-    assert!(!path.with_extension("pre-v2.bak").exists());
+    Ok(())
+}
+
+#[test]
+fn update_rejects_legacy_records() -> Result<(), Box<dyn std::error::Error>> {
+    let file = NamedTempFile::new()?;
+    let path = file.path();
+
+    let record = legacy_record("legacy", 1);
+    std::fs::write(path, format!("{}\n", serde_json::to_string(&record)?))?;
+    let before = std::fs::read_to_string(path)?;
+
+    hermes(path)
+        .arg("update")
+        .args(["legacy", "-c", CODE, "--password", PASSWORD])
+        .assert()
+        .failure()
+        .code(1)
+        .stderr(predicate::str::contains(
+            "legacy v1 format is no longer supported",
+        ));
+
+    assert_eq!(
+        std::fs::read_to_string(path)?,
+        before,
+        "a rejected legacy record must not be rewritten"
+    );
 
     Ok(())
 }
@@ -1651,12 +1605,13 @@ fn passwd_rejects_unencrypted_records() -> Result<(), Box<dyn std::error::Error>
 }
 
 #[test]
-fn passwd_upgrades_legacy_records() -> Result<(), Box<dyn std::error::Error>> {
+fn passwd_rejects_legacy_records() -> Result<(), Box<dyn std::error::Error>> {
     let file = NamedTempFile::new()?;
     let path = file.path();
 
-    let record = v1_record("legacy", &legacy_ciphertext(CODE, "old-pass"), 1);
+    let record = legacy_record("legacy", 1);
     std::fs::write(path, format!("{}\n", serde_json::to_string(&record)?))?;
+    let before = std::fs::read_to_string(path)?;
 
     hermes(path)
         .arg("passwd")
@@ -1668,25 +1623,17 @@ fn passwd_upgrades_legacy_records() -> Result<(), Box<dyn std::error::Error>> {
             "new-pass",
         ])
         .assert()
-        .success();
+        .failure()
+        .code(1)
+        .stderr(predicate::str::contains(
+            "legacy v1 format is no longer supported",
+        ));
 
-    assert!(
-        std::fs::read_to_string(path)?.contains("v2$"),
-        "legacy record should be upgraded to v2"
+    assert_eq!(
+        std::fs::read_to_string(path)?,
+        before,
+        "a rejected legacy record must not be rewritten"
     );
-
-    hermes(path)
-        .arg("ls")
-        .args(["legacy", "-q", "--password", "new-pass"])
-        .assert()
-        .success()
-        .stdout(predicate::str::is_match("^[0-9]{6}")?);
-
-    hermes(path)
-        .arg("ls")
-        .args(["legacy", "-q", "--password", "old-pass"])
-        .assert()
-        .failure();
 
     Ok(())
 }

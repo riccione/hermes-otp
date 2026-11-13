@@ -262,25 +262,31 @@ pub fn update_code(
         .then(|| get_effective_password(password))
         .transpose()?;
 
+    let mut key = None;
+
     if target_is_encrypted {
-        let key = vault_key(path, &mut codex, &pass, KeyMode::ExistingOnly, false)?
+        let unlocked = vault_key(path, &mut codex, &pass, KeyMode::ExistingOnly, false)?
             .ok_or("No vault key available.")?;
         crypto::decrypt_record(
             &codex.records[index].secret,
-            &key,
+            &unlocked,
             &codex.records[index].alias,
         )
         .map_err(|e| match e {
             crypto::CryptoError::Legacy => e.as_str().to_string(),
             _ => "Incorrect password. Nothing was changed.".to_string(),
         })?;
+        key = Some(unlocked);
     }
 
     let secret = if *is_unencrypt {
         clean_code
     } else {
-        let key = vault_key(path, &mut codex, &pass, KeyMode::CreateIfMissing, false)?
-            .ok_or("No vault key available.")?;
+        let key = match key {
+            Some(key) => key,
+            None => vault_key(path, &mut codex, &pass, KeyMode::CreateIfMissing, false)?
+                .ok_or("No vault key available.")?,
+        };
         crypto::encrypt_record(&clean_code, &key, alias).map_err(|e| e.as_str().to_string())?
     };
 

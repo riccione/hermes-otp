@@ -34,6 +34,109 @@ fn get_effective_password(password: &Option<String>) -> Result<String, String> {
         })
 }
 
+/// Whether [`vault_key`] may create a key for a vault that has none yet.
+#[derive(Clone, Copy)]
+enum KeyMode {
+    ExistingOnly,
+    CreateIfMissing,
+}
+
+/// Returns the vault key, unwrapping the header or migrating a v2 vault.
+///
+/// A file without a header and without encrypted records has no key unless
+/// `mode` allows creating one. Migration decrypts every v2 record once with the
+/// master password and rewrites the file atomically after a `pre-v3` snapshot.
+fn vault_key(
+    path: &Path,
+    codex: &mut file::Codex,
+    password: &Option<String>,
+    mode: KeyMode,
+    quiet: bool,
+) -> Result<Option<crypto::VaultKey>, String> {
+    if let Some(wrapper) = &codex.vault {
+        let pass = get_effective_password(password)?;
+        let key = crypto::unwrap_vault_key(wrapper, &pass)
+            .map_err(|_| "Incorrect password. Nothing was changed.".to_string())?;
+        return Ok(Some(key));
+    }
+
+    let encrypted: Vec<usize> = codex
+        .records
+        .iter()
+        .enumerate()
+        .filter(|(_, record)| !record.is_unencrypted)
+        .map(|(index, _)| index)
+        .collect();
+
+    if encrypted.is_empty() {
+        return match mode {
+            KeyMode::ExistingOnly => Ok(None),
+            KeyMode::CreateIfMissing => {
+                let pass = get_effective_password(password)?;
+                let key = crypto::generate_vault_key().map_err(|e| e.as_str().to_string())?;
+                let wrapper =
+                    crypto::wrap_vault_key(&pass, &key).map_err(|e| e.as_str().to_string())?;
+                codex.vault = Some(wrapper);
+                Ok(Some(key))
+            }
+        };
+    }
+
+    let pass = get_effective_password(password)?;
+    let mut plaintext = Vec::with_capacity(encrypted.len());
+    let mut failed = Vec::new();
+
+    for &index in &encrypted {
+        let record = &codex.records[index];
+
+        if !crypto::is_v2(&record.secret) && !crypto::is_v3(&record.secret) {
+            return Err(crypto::CryptoError::Legacy.as_str().to_string());
+        }
+
+        match crypto::decrypt_v2(&record.secret, &pass) {
+            Ok(secret) => plaintext.push((index, secret)),
+            Err(_) => failed.push(record.alias.as_str()),
+        }
+    }
+
+    if !failed.is_empty() {
+        return if failed.len() == encrypted.len() {
+            Err("Incorrect password. Nothing was changed.".to_string())
+        } else {
+            Err(format!(
+                "could not decrypt record(s) with this password: {}. \
+                 In hermes-otp 0.9.x, run `passwd <alias>` to give them the same password, then retry.",
+                failed.join(", ")
+            ))
+        };
+    }
+
+    let key = crypto::generate_vault_key().map_err(|e| e.as_str().to_string())?;
+
+    for (index, secret) in plaintext {
+        let alias = codex.records[index].alias.clone();
+        codex.records[index].secret =
+            crypto::encrypt_record(&secret, &key, &alias).map_err(|e| e.as_str().to_string())?;
+    }
+
+    codex.vault = Some(crypto::wrap_vault_key(&pass, &key).map_err(|e| e.as_str().to_string())?);
+
+    let backup = file::backup_pre_v3(path).map_err(|e| format!("backup failed: {e}"))?;
+    file::write_codex_atomic(path, codex)?;
+
+    if !quiet {
+        match backup {
+            Some(backup) => eprintln!(
+                "Migrated records to the vault format; backup at {}",
+                backup.display()
+            ),
+            None => eprintln!("Migrated records to the vault format."),
+        }
+    }
+
+    Ok(Some(key))
+}
+
 /* Validate code - check if it is a valid base32
 * Here I beleive it is necessary to add some explanation for base32 and TOTP.
 * Overtime I forgot what it does and my code comments are not good :/
@@ -79,37 +182,44 @@ pub fn add(
     // reject parameters the generator could not honor
     otp::validate_params(algorithm, digits, period)?;
 
-    if file::file_exists(path) && file::alias_exists(alias, path) {
+    let existed = file::file_exists(path);
+    let mut codex = if existed {
+        file::read_codex(path)?
+    } else {
+        file::Codex::default()
+    };
+
+    if codex.records.iter().any(|r| r.alias == *alias) {
         return Err(format!("Error: Alias '{alias}' already exists."));
     }
 
     // encrypt if necessary
     let secret = if *is_unencrypt {
-        clean_code.to_string()
+        clean_code.clone()
     } else {
-        crypto::encrypt_v2(&clean_code, &get_effective_password(password)?)
-            .map_err(|e| e.as_str().to_string())?
+        let key = vault_key(path, &mut codex, password, KeyMode::CreateIfMissing, false)?
+            .ok_or("No vault key available.")?;
+        crypto::encrypt_record(&clean_code, &key, alias).map_err(|e| e.as_str().to_string())?
     };
 
-    // serialize and save
     let record = Record::new(
         alias.to_string(),
-        secret.to_string(),
+        secret,
         *is_unencrypt,
         algorithm.to_string(),
         digits as u8,
         period,
     );
-    let json_data = serde_json::to_string(&record).map_err(|e| e.to_string())?;
+
+    codex.records.push(record.clone());
 
     file::ensure_dir_exists(path).map_err(|e| e.to_string())?;
 
-    if file::file_exists(path) {
+    if existed {
         file::create_routine_backup(path).map_err(|e| format!("Warning: Backup failed: {}", e))?;
-        file::append_to_file(path, &json_data).map_err(|e| e.to_string())?;
-    } else {
-        file::overwrite_file(path, &json_data).map_err(|e| e.to_string())?;
     }
+
+    file::write_codex_atomic(path, &codex)?;
 
     println!("Record saved.");
 
@@ -136,79 +246,91 @@ pub fn update_code(
     let clean_code = sanitize_and_validate_code(new_code)?;
 
     // Locate the record first: we need to know whether it is encrypted.
-    let records = file::read_codex(path)?;
-    let existing = records
+    let mut codex = file::read_codex(path)?;
+    let index = codex
+        .records
         .iter()
-        .find(|r| r.alias == *alias)
+        .position(|r| r.alias == *alias)
         .ok_or_else(|| format!("No record for '{alias}' found."))?;
-    let target_is_encrypted = !existing.is_unencrypted;
 
-    // The record's password is needed to prove access whenever the record is
+    let target_is_encrypted = !codex.records[index].is_unencrypted;
+
+    // The master password is needed to prove access whenever the record is
     // encrypted, even if the replacement will be stored in plaintext (-u).
     let need_password = target_is_encrypted || !*is_unencrypt;
     let pass = need_password
         .then(|| get_effective_password(password))
         .transpose()?;
 
-    // Verify against this record only: each record is encrypted on its own,
-    // so there is no vault-wide password to check.
+    let mut key = None;
+
     if target_is_encrypted {
-        let p = pass
-            .as_ref()
-            .ok_or("Incorrect password. Nothing was changed.")?;
-        decrypt_user_secret(&existing.secret, p)?;
+        let unlocked = vault_key(path, &mut codex, &pass, KeyMode::ExistingOnly, false)?
+            .ok_or("No vault key available.")?;
+        crypto::decrypt_record(
+            &codex.records[index].secret,
+            &unlocked,
+            &codex.records[index].alias,
+        )
+        .map_err(|e| match e {
+            crypto::CryptoError::Legacy => e.as_str().to_string(),
+            _ => "Incorrect password. Nothing was changed.".to_string(),
+        })?;
+        key = Some(unlocked);
     }
 
-    // Do the swap, keeping the record's OTP parameters.
-    remove(path, alias)?;
-    add(
-        path,
-        alias,
-        &clean_code,
-        &existing.algorithm,
-        existing.digits as u32,
-        existing.period,
-        is_unencrypt,
-        &pass,
-    )?;
+    let secret = if *is_unencrypt {
+        clean_code
+    } else {
+        let key = match key {
+            Some(key) => key,
+            None => vault_key(path, &mut codex, &pass, KeyMode::CreateIfMissing, false)?
+                .ok_or("No vault key available.")?,
+        };
+        crypto::encrypt_record(&clean_code, &key, alias).map_err(|e| e.as_str().to_string())?
+    };
+
+    let record = &mut codex.records[index];
+    record.secret = secret;
+    record.is_unencrypted = *is_unencrypt;
+
+    file::create_routine_backup(path).map_err(|e| format!("Warning: Backup failed: {}", e))?;
+    file::write_codex_atomic(path, &codex)?;
+
     println!("Record for '{alias}' successfully updated.");
     Ok(())
 }
 
-/// Changes the encryption password of a single record.
-pub fn passwd(
-    path: &Path,
-    alias: &str,
-    current: &Option<String>,
-    new: &Option<String>,
-) -> Result<(), String> {
-    let mut records = file::read_codex(path)?;
+/// Changes the master password by re-wrapping the vault key.
+pub fn passwd(path: &Path, current: &Option<String>, new: &Option<String>) -> Result<(), String> {
+    let mut codex = file::read_codex(path)?;
 
-    // exact, case-sensitive matching, like update/remove/rename
-    let index = records
-        .iter()
-        .position(|r| r.alias == *alias)
-        .ok_or("Record not found.")?;
-
-    if records[index].is_unencrypted {
-        return Err("Cannot change password of an unencrypted record.".into());
+    if codex.vault.is_none() && codex.records.iter().all(|record| record.is_unencrypted) {
+        return Err("No encrypted records in this vault. Nothing to change.".into());
     }
 
     let current_password = resolve_current_password(current)?;
-    let plaintext = decrypt_user_secret(&records[index].secret, &current_password)?;
+    let key = vault_key(
+        path,
+        &mut codex,
+        &Some(current_password),
+        KeyMode::ExistingOnly,
+        false,
+    )?
+    .ok_or("No vault key available.")?;
 
     let new_password = match new {
         Some(password) => password.clone(),
         None => prompt_new_password()?,
     };
 
-    // rotations always store the authenticated v2 format
-    records[index].secret =
-        crypto::encrypt_v2(&plaintext, &new_password).map_err(|e| e.as_str().to_string())?;
+    // Only the wrapper changes; record ciphertexts stay untouched.
+    codex.vault =
+        Some(crypto::wrap_vault_key(&new_password, &key).map_err(|e| e.as_str().to_string())?);
 
-    save_records_routine(path, &records)?;
+    save_records_routine(path, &codex)?;
 
-    println!("Password updated successfully for {alias}.");
+    println!("Master password updated.");
     Ok(())
 }
 
@@ -237,42 +359,26 @@ fn prompt_new_password() -> Result<String, String> {
     Ok(first)
 }
 
-/// Writes all records after taking the routine `codex.bak` snapshot.
-fn save_records_routine(path: &Path, records: &[Record]) -> Result<(), String> {
+/// Writes the codex after taking the routine `codex.bak` snapshot.
+fn save_records_routine(path: &Path, codex: &file::Codex) -> Result<(), String> {
     file::create_routine_backup(path).map_err(|e| format!("Could not create backup: {e}"))?;
 
-    let lines: Vec<String> = records
-        .iter()
-        .map(serde_json::to_string)
-        .collect::<Result<Vec<String>, serde_json::Error>>()
-        .map_err(|e| format!("Serialization error: {e}"))?;
-
-    let content = lines.join("\n") + "\n";
-    file::overwrite_file_atomic(path, &content).map_err(|e| format!("Could not save changes: {e}"))
+    file::write_codex_atomic(path, codex).map_err(|e| format!("Could not save changes: {e}"))
 }
 
 pub fn remove(path: &Path, alias: &str) -> Result<(), String> {
     file::create_routine_backup(path).map_err(|e| format!("Warning: Backup failed: {}", e))?;
 
-    let records = file::read_codex(path)?;
-    let original_len = records.len();
+    let mut codex = file::read_codex(path)?;
+    let original_len = codex.records.len();
 
-    let filtered_records: Vec<Record> = records.into_iter().filter(|r| r.alias != alias).collect();
+    codex.records.retain(|r| r.alias != alias);
 
-    if filtered_records.len() == original_len {
+    if codex.records.len() == original_len {
         return Err(format!("Error: No record for '{alias}' found"));
     }
 
-    // Convert the Records back to JSON
-    let lines: Vec<String> = filtered_records
-        .iter()
-        .map(serde_json::to_string)
-        .collect::<Result<Vec<String>, serde_json::Error>>()
-        .map_err(|e| format!("Serialization error: {e}"))?;
-
-    let data = lines.join("\n") + "\n";
-
-    file::overwrite_file(path, &data).map_err(|e| format!("Error: Failed to save changes: {e}"))?;
+    file::write_codex_atomic(path, &codex)?;
 
     println!("Record for {alias} removed.");
     Ok(())
@@ -289,14 +395,15 @@ pub fn ls(
     exact_match: bool,
     fuzzy: bool,
 ) -> Result<(), AppError> {
-    let records = file::read_codex(path)?;
+    let mut codex = file::read_codex(path)?;
 
     // Indices of the matching records, in display order.
     let matched: Vec<usize> = if let Some(filter) = alias_filter {
         if fuzzy {
             let mut matcher = nucleo_matcher::Matcher::new(Config::DEFAULT);
 
-            let mut scored: Vec<(u32, usize)> = records
+            let mut scored: Vec<(u32, usize)> = codex
+                .records
                 .iter()
                 .enumerate()
                 .filter_map(|(index, r)| {
@@ -314,7 +421,8 @@ pub fn ls(
             scored.into_iter().map(|(_, index)| index).collect()
         } else if exact_match {
             // exact match is case-sensitive, like remove/rename/update
-            records
+            codex
+                .records
                 .iter()
                 .enumerate()
                 .filter(|(_, r)| r.alias == *filter)
@@ -323,7 +431,8 @@ pub fn ls(
         } else {
             // partial match is case-insensitive
             let filter_lower = filter.to_lowercase();
-            records
+            codex
+                .records
                 .iter()
                 .enumerate()
                 .filter(|(_, r)| r.alias.to_lowercase().contains(&filter_lower))
@@ -331,7 +440,7 @@ pub fn ls(
                 .collect()
         }
     } else {
-        (0..records.len()).collect()
+        (0..codex.records.len()).collect()
     };
 
     if matched.is_empty() {
@@ -352,8 +461,12 @@ pub fn ls(
     if !is_unencrypt {
         let legacy: Vec<&str> = matched
             .iter()
-            .map(|&index| &records[index])
-            .filter(|record| !record.is_unencrypted && !crypto::is_v2(&record.secret))
+            .map(|&index| &codex.records[index])
+            .filter(|record| {
+                !record.is_unencrypted
+                    && !crypto::is_v2(&record.secret)
+                    && !crypto::is_v3(&record.secret)
+            })
             .map(|record| record.alias.as_str())
             .collect();
 
@@ -366,21 +479,30 @@ pub fn ls(
         }
     }
 
-    let needs_password =
-        !is_unencrypt && matched.iter().any(|&index| !records[index].is_unencrypted);
+    let needs_password = !is_unencrypt
+        && matched
+            .iter()
+            .any(|&index| !codex.records[index].is_unencrypted);
 
     let pass = needs_password
         .then(|| get_effective_password(password))
-        .transpose()?
-        .unwrap_or_default();
+        .transpose()?;
 
-    // Decrypt each matched record exactly once. This keeps Argon2 out of the
-    // render and live-redraw paths.
+    // Argon2 runs once here, when the vault key is unwrapped (or a v2 vault is
+    // migrated); the records themselves only need fast XChaCha20.
+    let key = if needs_password {
+        vault_key(path, &mut codex, &pass, KeyMode::ExistingOnly, quiet)?
+    } else {
+        None
+    };
+
+    // Decrypt each matched record exactly once. This keeps decryption out of
+    // the render and live-redraw paths.
     let mut plaintext: Vec<Option<String>> = Vec::with_capacity(matched.len());
     let mut decrypt_errors: Vec<Option<String>> = Vec::with_capacity(matched.len());
 
     for &index in &matched {
-        let record = &records[index];
+        let record = &codex.records[index];
 
         if is_unencrypt || record.is_unencrypted {
             plaintext.push(Some(record.secret.clone()));
@@ -388,14 +510,20 @@ pub fn ls(
             continue;
         }
 
-        match decrypt_secret(&record.secret, &pass) {
-            Ok(secret) => {
-                plaintext.push(Some(secret));
-                decrypt_errors.push(None);
-            }
-            Err(e) => {
+        match key.as_ref() {
+            Some(key) => match crypto::decrypt_record(&record.secret, key, &record.alias) {
+                Ok(secret) => {
+                    plaintext.push(Some(secret));
+                    decrypt_errors.push(None);
+                }
+                Err(e) => {
+                    plaintext.push(None);
+                    decrypt_errors.push(Some(e.as_str().to_string()));
+                }
+            },
+            None => {
                 plaintext.push(None);
-                decrypt_errors.push(Some(e.as_str().to_string()));
+                decrypt_errors.push(Some("vault key unavailable".to_string()));
             }
         }
     }
@@ -404,7 +532,7 @@ pub fn ls(
         .iter()
         .enumerate()
         .map(|(position, &index)| Row {
-            record: &records[index],
+            record: &codex.records[index],
             secret: plaintext[position].as_deref(),
             error: decrypt_errors[position].as_deref(),
         })
@@ -479,24 +607,6 @@ impl Row<'_> {
     fn cell(&self) -> String {
         self.otp().unwrap_or_else(|_| OTP_ERROR_TEXT.to_string())
     }
-}
-
-/// Decrypts a v2 record, rejecting any payload in the removed v1 format.
-fn decrypt_secret(secret: &str, password: &str) -> Result<String, crypto::CryptoError> {
-    if crypto::is_v2(secret) {
-        crypto::decrypt_v2(secret, password)
-    } else {
-        Err(crypto::CryptoError::Legacy)
-    }
-}
-
-/// Like [`decrypt_secret`], but maps a wrong password to the user-facing
-/// message while keeping the legacy-format hint intact.
-fn decrypt_user_secret(secret: &str, password: &str) -> Result<String, String> {
-    decrypt_secret(secret, password).map_err(|e| match e {
-        crypto::CryptoError::Legacy => e.as_str().to_string(),
-        _ => "Incorrect password. Nothing was changed.".to_string(),
-    })
 }
 
 /// Renders the countdown bar for `rem` seconds out of `period`.
@@ -581,38 +691,46 @@ fn print_json(rows: &[Row], single: bool) {
     println!("{}", serde_json::to_string_pretty(&output).unwrap());
 }
 
-pub fn rename(path: &Path, old_alias: &str, new_alias: &str) -> Result<(), String> {
+pub fn rename(
+    path: &Path,
+    old_alias: &str,
+    new_alias: &str,
+    password: &Option<String>,
+) -> Result<(), String> {
     if file::alias_exists(new_alias, path) {
         return Err(format!("Alias '{new_alias}' already exists."));
     }
 
     // read the file
-    let mut records = file::read_codex(path)?;
-    let mut found = false;
+    let mut codex = file::read_codex(path)?;
+    let index = codex
+        .records
+        .iter()
+        .position(|record| record.alias == old_alias)
+        .ok_or_else(|| format!("Alias '{}' not found.", old_alias))?;
 
-    for record in records.iter_mut() {
-        if record.alias == old_alias {
-            record.alias = new_alias.to_string();
-            found = true;
-            break;
-        }
+    // Encrypted records are bound to their alias, so the ciphertext has to be
+    // re-encrypted under the new name.
+    if !codex.records[index].is_unencrypted {
+        let pass = get_effective_password(password)?;
+        let key = vault_key(path, &mut codex, &Some(pass), KeyMode::ExistingOnly, false)?
+            .ok_or("No vault key available.")?;
+        let plaintext = crypto::decrypt_record(
+            &codex.records[index].secret,
+            &key,
+            &codex.records[index].alias,
+        )
+        .map_err(|_| "Incorrect password. Nothing was changed.".to_string())?;
+
+        codex.records[index].secret = crypto::encrypt_record(&plaintext, &key, new_alias)
+            .map_err(|e| e.as_str().to_string())?;
     }
 
-    if !found {
-        return Err(format!("Alias '{}' not found.", old_alias));
-    }
+    codex.records[index].alias = new_alias.to_string();
 
     file::create_routine_backup(path).map_err(|e| format!("Warning: Backup failed: {}", e))?;
 
-    let lines: Vec<String> = records
-        .iter()
-        .map(serde_json::to_string)
-        .collect::<Result<Vec<String>, serde_json::Error>>()
-        .map_err(|e| format!("Serialization error: {e}"))?;
-
-    let data = lines.join("\n") + "\n";
-
-    file::overwrite_file(path, &data).map_err(|e| format!("Error saving changes: {e}"))?;
+    file::write_codex_atomic(path, &codex)?;
 
     println!("Successfully renamed '{}' to '{}'", old_alias, new_alias);
     Ok(())
@@ -627,18 +745,26 @@ pub fn add_from_otpauth(
     let parsed = OtpAuth::parse(uri)?;
     let alias = parsed.alias.clone();
 
-    if file::file_exists(path) && file::alias_exists(&alias, path) {
+    let existed = file::file_exists(path);
+    let mut codex = if existed {
+        file::read_codex(path)?
+    } else {
+        file::Codex::default()
+    };
+
+    if codex.records.iter().any(|r| r.alias == alias) {
         return Err(format!("Error: Alias '{alias}' already exists."));
     }
 
     let secret = if *is_unencrypt {
         parsed.secret.clone()
     } else {
-        crypto::encrypt_v2(&parsed.secret, &get_effective_password(password)?)
-            .map_err(|e| e.as_str().to_string())?
+        let key = vault_key(path, &mut codex, password, KeyMode::CreateIfMissing, false)?
+            .ok_or("No vault key available.")?;
+        crypto::encrypt_record(&parsed.secret, &key, &alias).map_err(|e| e.as_str().to_string())?
     };
 
-    let record = Record {
+    codex.records.push(Record {
         alias: alias.clone(),
         secret,
         is_unencrypted: *is_unencrypt,
@@ -646,17 +772,15 @@ pub fn add_from_otpauth(
         digits: parsed.digits,
         period: parsed.period,
         created_at: parsed.created_at,
-    };
+    });
 
-    let json_data = serde_json::to_string(&record).map_err(|e| e.to_string())?;
     file::ensure_dir_exists(path).map_err(|e| e.to_string())?;
 
-    if file::file_exists(path) {
+    if existed {
         file::create_routine_backup(path).map_err(|e| format!("Warning: Backup failed: {}", e))?;
-        file::append_to_file(path, &json_data).map_err(|e| e.to_string())?;
-    } else {
-        file::overwrite_file(path, &json_data).map_err(|e| e.to_string())?;
     }
+
+    file::write_codex_atomic(path, &codex)?;
 
     println!("Record saved: {alias}");
     Ok(())
@@ -673,23 +797,20 @@ pub fn add_batch(
 
     file::ensure_dir_exists(path).map_err(|e| e.to_string())?;
 
-    let mut current_records = if file::file_exists(path) {
+    let existed = file::file_exists(path);
+    let mut codex = if existed {
         file::read_codex(path)?
     } else {
-        Vec::new()
+        file::Codex::default()
     };
 
     for parsed in &parsed_records {
-        if current_records.iter().any(|r| r.alias == parsed.alias) {
+        if codex.records.iter().any(|r| r.alias == parsed.alias) {
             return Err(format!(
                 "Error: Alias '{}' already exists. Aborting batch.",
                 parsed.alias
             ));
         }
-    }
-
-    if file::file_exists(path) {
-        file::create_routine_backup(path).map_err(|e| format!("Warning: Backup failed: {}", e))?;
     }
 
     let pass = if *is_unencrypt {
@@ -698,15 +819,21 @@ pub fn add_batch(
         Some(get_effective_password(password)?)
     };
 
+    let key = if *is_unencrypt {
+        None
+    } else {
+        vault_key(path, &mut codex, &pass, KeyMode::CreateIfMissing, false)?
+    };
+
     for parsed in parsed_records {
         let secret = if *is_unencrypt {
             parsed.secret.clone()
         } else {
-            crypto::encrypt_v2(&parsed.secret, pass.as_ref().unwrap())
+            crypto::encrypt_record(&parsed.secret, key.as_ref().unwrap(), &parsed.alias)
                 .map_err(|e| e.as_str().to_string())?
         };
 
-        let record = Record {
+        codex.records.push(Record {
             alias: parsed.alias,
             secret,
             is_unencrypted: *is_unencrypt,
@@ -714,67 +841,100 @@ pub fn add_batch(
             digits: parsed.digits,
             period: parsed.period,
             created_at: parsed.created_at,
-        };
-
-        current_records.push(record);
+        });
     }
 
-    let lines: Vec<String> = current_records
-        .iter()
-        .map(serde_json::to_string)
-        .collect::<Result<Vec<String>, serde_json::Error>>()
-        .map_err(|e| format!("Serialization error: {e}"))?;
+    if existed {
+        file::create_routine_backup(path).map_err(|e| format!("Warning: Backup failed: {}", e))?;
+    }
 
-    let content = lines.join("\n") + "\n";
-    file::overwrite_file(path, &content)
-        .map_err(|e| format!("Error: Failed to save changes: {e}"))?;
+    file::write_codex_atomic(path, &codex)?;
 
     println!("Successfully imported {count} records.");
     Ok(())
 }
 
 pub fn export(codex_path: &Path, output_path: &Path) -> Result<(), String> {
-    let records = file::read_codex(codex_path)?;
+    let codex = file::read_codex(codex_path)?;
 
-    if records.is_empty() {
+    if codex.records.is_empty() {
         return Err("No records to export.".to_string());
     }
 
-    let json =
-        serde_json::to_string_pretty(&records).map_err(|e| format!("Serialization error: {e}"))?;
+    let count = codex.records.len();
+
+    // A headerless vault exports as a plain array (the old format); a v3 vault
+    // exports its wrapped key so it can be restored with the master password.
+    let json = if let Some(vault) = &codex.vault {
+        let envelope = serde_json::json!({
+            "version": 3,
+            "vault": vault,
+            "records": codex.records,
+        });
+        serde_json::to_string_pretty(&envelope)
+    } else {
+        serde_json::to_string_pretty(&codex.records)
+    }
+    .map_err(|e| format!("Serialization error: {e}"))?;
 
     file::ensure_dir_exists(output_path).map_err(|e| e.to_string())?;
     std::fs::write(output_path, &json)
         .map_err(|e| format!("Error writing to '{}': {e}", output_path.display()))?;
     file::secure_file(output_path).map_err(|e| e.to_string())?;
 
-    println!(
-        "Exported {} records to '{}'.",
-        records.len(),
-        output_path.display()
-    );
+    println!("Exported {count} records to '{}'.", output_path.display());
     Ok(())
 }
 
-pub fn import(codex_path: &Path, input_path: &Path) -> Result<(), String> {
+pub fn import(
+    codex_path: &Path,
+    input_path: &Path,
+    password: &Option<String>,
+) -> Result<(), String> {
     let content = std::fs::read_to_string(input_path)
         .map_err(|e| format!("Error reading '{}': {e}", input_path.display()))?;
 
-    let imported: Vec<Record> = serde_json::from_str(&content)
+    let value: serde_json::Value = serde_json::from_str(&content)
         .map_err(|e| format!("Invalid JSON in '{}': {e}", input_path.display()))?;
+
+    let (source_vault, imported): (Option<String>, Vec<Record>) = match value {
+        serde_json::Value::Array(_) => {
+            let records = serde_json::from_value(value)
+                .map_err(|e| format!("Invalid JSON in '{}': {e}", input_path.display()))?;
+            (None, records)
+        }
+        serde_json::Value::Object(_) => {
+            #[derive(serde::Deserialize)]
+            struct Envelope {
+                version: u8,
+                vault: String,
+                records: Vec<Record>,
+            }
+
+            let envelope: Envelope = serde_json::from_value(value)
+                .map_err(|e| format!("Invalid vault file '{}': {e}", input_path.display()))?;
+
+            if envelope.version != 3 {
+                return Err(format!("Unsupported vault version {}.", envelope.version));
+            }
+
+            (Some(envelope.vault), envelope.records)
+        }
+        _ => return Err("Invalid JSON: expected an array or a vault object.".to_string()),
+    };
 
     if imported.is_empty() {
         return Err("No records found in import file.".to_string());
     }
 
-    let existing = if file::file_exists(codex_path) {
+    let mut codex = if file::file_exists(codex_path) {
         file::read_codex(codex_path)?
     } else {
-        Vec::new()
+        file::Codex::default()
     };
 
     for record in &imported {
-        if existing.iter().any(|r| r.alias == record.alias) {
+        if codex.records.iter().any(|r| r.alias == record.alias) {
             return Err(format!(
                 "Error: Alias '{}' already exists in codex. Aborting import.",
                 record.alias
@@ -798,27 +958,50 @@ pub fn import(codex_path: &Path, input_path: &Path) -> Result<(), String> {
 
     file::ensure_dir_exists(codex_path).map_err(|e| e.to_string())?;
 
+    // A vault envelope carries records encrypted with its own key, so they
+    // have to be re-encrypted under the destination vault key.
+    let imported = if let Some(source_vault) = source_vault {
+        let pass = get_effective_password(password)?;
+        let source_key = crypto::unwrap_vault_key(&source_vault, &pass)
+            .map_err(|_| "Incorrect password for the imported vault.".to_string())?;
+        let destination_key = vault_key(
+            codex_path,
+            &mut codex,
+            &Some(pass),
+            KeyMode::CreateIfMissing,
+            false,
+        )?
+        .ok_or("No vault key available.")?;
+
+        let mut converted = Vec::with_capacity(imported.len());
+        for mut record in imported {
+            if !record.is_unencrypted {
+                let plaintext = crypto::decrypt_record(&record.secret, &source_key, &record.alias)
+                    .map_err(|_| {
+                        format!("Could not decrypt imported record '{}'.", record.alias)
+                    })?;
+                record.secret = crypto::encrypt_record(&plaintext, &destination_key, &record.alias)
+                    .map_err(|e| e.as_str().to_string())?;
+            }
+            converted.push(record);
+        }
+        converted
+    } else {
+        imported
+    };
+
     if file::file_exists(codex_path) {
         file::create_routine_backup(codex_path)
             .map_err(|e| format!("Warning: Backup failed: {e}"))?;
     }
 
-    let mut all_records = existing;
     for record in imported {
-        all_records.push(record);
+        codex.records.push(record);
     }
 
-    let lines: Vec<String> = all_records
-        .iter()
-        .map(serde_json::to_string)
-        .collect::<Result<Vec<String>, serde_json::Error>>()
-        .map_err(|e| format!("Serialization error: {e}"))?;
+    file::write_codex_atomic(codex_path, &codex)?;
 
-    let content = lines.join("\n") + "\n";
-    file::overwrite_file(codex_path, &content)
-        .map_err(|e| format!("Error: Failed to save changes: {e}"))?;
-
-    let count = all_records.len();
+    let count = codex.records.len();
     println!("Successfully imported {count} records total.");
     Ok(())
 }

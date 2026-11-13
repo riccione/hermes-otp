@@ -171,7 +171,8 @@ hermes-otp ls -q -f json | jq -r '.[].otp'
 | `2` | Usage error — a bad flag or argument. |
 | `3` | Partial success — some records produced a code, some did not. |
 
-Exit code `3` exists because records can have different passwords; the process
+Exit code `3` exists because individual records can still fail (a tampered
+secret, an invalid Base32 payload, or unsupported parameters); the process
 tells you that the output is incomplete rather than silently giving you a
 half-empty result.
 
@@ -179,48 +180,55 @@ half-empty result.
 
 We believe in being honest about cryptography.
 
-- **Authenticated encryption:** new records use **XChaCha20-Poly1305**, so a
-  tampered ciphertext is rejected instead of silently decrypting to garbage.
-- **Memory-hard key derivation:** keys come from **Argon2id** (19 MiB, 2
-  iterations) with a fresh random 16-byte salt per record.
-- **Per-record encryption:** every record is encrypted on its own, so one
-  compromised password does not unlock the whole file.
+- **Authenticated encryption:** records and the vault key use
+  **XChaCha20-Poly1305**, so tampered data is rejected instead of silently
+  decrypting to garbage.
+- **Memory-hard key derivation:** the vault key is wrapped with **Argon2id**
+  (19 MiB, 2 iterations, fresh 16-byte salt), so the master password is
+  stretched only once per command.
+- **Single vault key:** records share a random 32-byte key and use fast
+  XChaCha20, so `ls` no longer runs Argon2 for every record.
+- **Alias binding:** each ciphertext is bound to its alias as associated data,
+  so records cannot be swapped inside a vault.
 - **File permissions:** the codex is `0600`; the app's config directory is
   `0700`.
-- **Update protection:** changing a record verifies its password *before*
+- **Update protection:** changing a record verifies the password *before*
   anything is written, so a typo cannot re-key or corrupt the file.
 - **Passwords are never stored:** resolution order is `--password` →
   `HERMES_OTP_PASSWORD` → interactive prompt.
 
-### Upgrading from the legacy v1 format
+### Upgrading old vaults
 
-The `magic-crypt` AES-CBC format (RUSTSEC-2024-0430) was removed in v0.9.0.
-Records written by releases before v0.8.0 can no longer be read: commands that
-need the secret fail with an explicit error instead of falling back to the
-unauthenticated format, and the stored ciphertext is left untouched.
+**v1 (before 0.8.0):** the `magic-crypt` AES-CBC format (RUSTSEC-2024-0430) was
+removed in v0.9.0. Install v0.8.x, run `ls` once so every record is rewritten
+as v2, then upgrade. There is no fallback decryptor anymore.
 
-Migrate **before** upgrading. Install v0.8.x, run `ls` once so every record is
-rewritten as v2, then upgrade:
+**v2 (0.8.x–0.9.x):** v1.0 stores records under a single random vault key,
+wrapped with the master password and kept in the first line of the codex.
+Older vaults are migrated the first time a command needs the key:
 
 ```sh
-cargo install hermes-otp --version 0.8.0
 hermes-otp ls
 ```
 
-v0.8.x snapshots the vault to `codex.pre-v2.bak` (mode `0600`) before the
-first migration, so you can still roll back. Migration is per record because
-records may use different passwords; records that cannot be decrypted stay in
-the old format.
+Migration rewrites every record as `v3$…` and snapshots the original vault to
+`codex.pre-v3.bak` (mode `0600`). It uses the one password supplied on that
+command, so every encrypted record must already share it; if they do not, the
+command fails and **nothing is changed**, listing the records that need
+attention. Set matching passwords with v0.9.x first:
+
+```sh
+# v0.9.x: one password per record
+hermes-otp passwd github --password "$OLD" --new-password "$NEW"
+```
 
 Passwords are used **exactly as provided**: leading and trailing whitespace is
 significant.
 
 ### Limitations to know
 
-- **v1 records must be migrated with v0.8.x first.** There is no fallback
-  decryptor anymore.
-- **No associated data:** ciphertexts are authenticated but not bound to their
-  alias.
+- **One master password per vault:** per-record passwords were removed, so a
+  compromised master password exposes every encrypted record in the vault.
 
 <details>
 <summary>Command reference</summary>
@@ -233,13 +241,13 @@ significant.
 | `add --otpauth <URI>` | Add from an `otpauth://` URI. |
 | `add --import <FILE>` | Batch import URIs, one per line. |
 | `update <ALIAS> -c <CODE>` | Replace a record's secret after verifying its password. |
-| `passwd <ALIAS>` | Change the encryption password for one record. |
+| `passwd` | Change the vault master password. |
 | `remove <ALIAS>` | Remove a record. |
-| `rename <OLD> <NEW>` | Rename an alias. |
+| `rename <OLD> <NEW>` | Rename an alias (`--password` for encrypted records). |
 | `ls [ALIAS]` | List codes; a partial match filters, `--exact` is case-sensitive. |
 | `config` | Show the codex path. |
-| `export -o <FILE>` | Export records to a JSON file. |
-| `import <FILE>` | Import records from a JSON file. |
+| `export -o <FILE>` | Export records (v3 vaults include the wrapped key). |
+| `import <FILE>` | Import records; `--password` for vault envelopes. |
 
 ### Flags
 
@@ -252,6 +260,7 @@ significant.
 | `-p, --path` | Custom path to the codex file. |
 | `-u, --unencrypt` | Store the secret in plain text (debugging only). |
 | `--password` | Password on the command line (leaks into shell history). |
+| `--new-password` | New master password for `passwd` (leaks into shell history). |
 | `-q, --quiet` | Plain output for scripts: no countdown bar or prompt. |
 | `-e, --exact` | Exact, case-sensitive alias match for `ls`. |
 | `-z, --fuzzy` | Fuzzy search across aliases. |
@@ -291,44 +300,47 @@ hermes-otp add --import uris.txt
 
 # JSON backup and restore
 hermes-otp export -o backup.json
-hermes-otp import backup.json
+hermes-otp import backup.json --password "$MASTER"
 ```
 
-The JSON format is an array of records:
+A plaintext-only vault exports as an array of records. A v3 vault exports an
+envelope that carries the wrapped key, so it stays encrypted:
 
 ```json
-[
-  {
-    "alias": "GitHub:alice",
-    "secret": "JBSWY3DPEHPK3PXP",
-    "is_unencrypted": true,
-    "algorithm": "sha1",
-    "digits": 6,
-    "period": 30,
-    "created_at": 1724110000
-  }
-]
+{
+  "version": 3,
+  "vault": "v3w$…",
+  "records": [
+    {
+      "alias": "GitHub:alice",
+      "secret": "v3$…",
+      "is_unencrypted": false,
+      "algorithm": "sha1",
+      "digits": 6,
+      "period": 30,
+      "created_at": 1724110000
+    }
+  ]
+}
 ```
 
-`export` writes each secret exactly as stored, so v2 records stay `v2$…`
-payloads: a backup is only restorable with the same password, and older
-binaries cannot read v2 records.
+Importing an envelope unwraps both the source and destination vaults with the
+same master password, then re-encrypts every imported record under the
+destination key. Array imports keep their records as-is.
 
-### Change a record's password
+### Change the master password
 
 ```sh
 # Interactive prompts (current, then new twice)
-hermes-otp passwd github
+hermes-otp passwd
 
 # Non-interactive
-hermes-otp passwd github --password "$OLD" --new-password "$NEW"
+hermes-otp passwd --password "$OLD" --new-password "$NEW"
 ```
 
-`passwd` verifies the current password, re-encrypts the secret with
-Argon2id + XChaCha20-Poly1305, and writes the vault atomically after taking
-the routine `codex.bak` snapshot. Records stored in the legacy format are
-upgraded to v2; unencrypted records are rejected because they have no
-password to rotate.
+`passwd` re-wraps the vault key with the new password and writes the vault
+atomically after taking the routine `codex.bak` snapshot. Record ciphertexts
+are not touched, so rotation is instant even on large vaults.
 
 </details>
 

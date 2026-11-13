@@ -10,7 +10,7 @@ This document outlines the planned development and architectural changes for Her
 
 ## v1.0.0 (Future Architecture)
 *The "Performance & Ecosystem" release.*
-- [ ] **Master Vault Architecture (v3 format):** 
+- [x] **Master Vault Architecture (v3 format):** 
   - *Why:* Currently, `ls` runs Argon2 for *every* record, causing a 1-2 second delay on large vaults. 
   - *How:* Switch to a single randomly generated "Vault Key" that encrypts all records (using fast XChaCha20). The Vault Key itself is encrypted by the Master Password (via Argon2). Argon2 only runs once per command, making `ls` instant.
 - [ ] **Publish to crates.io:** Allow users to install via `cargo install hermes-otp`.

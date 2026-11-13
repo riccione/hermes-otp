@@ -13,6 +13,40 @@ fn hermes(path: &std::path::Path) -> assert_cmd::Command {
     cmd
 }
 
+/// Flips one ciphertext character of the first record, keeping it decodable.
+fn tamper_first_record(path: &std::path::Path) -> Result<(), Box<dyn std::error::Error>> {
+    let content = std::fs::read_to_string(path)?;
+    let mut lines = content.lines().filter(|line| !line.trim().is_empty());
+    let header = lines.next().ok_or("missing vault header")?;
+    let record_line = lines.next().ok_or("missing record")?;
+    let mut record: serde_json::Value = serde_json::from_str(record_line)?;
+
+    let secret = record["secret"].as_str().unwrap().to_string();
+    let parts: Vec<&str> = secret.split('$').collect();
+    assert_eq!(parts.len(), 3, "expected a v3 payload");
+
+    let mut ciphertext: Vec<char> = parts[2].chars().collect();
+    let position = ciphertext.iter().position(|c| *c != '=').unwrap();
+    ciphertext[position] = if ciphertext[position] == 'A' {
+        'B'
+    } else {
+        'A'
+    };
+
+    record["secret"] = serde_json::Value::String(format!(
+        "{}${}${}",
+        parts[0],
+        parts[1],
+        ciphertext.into_iter().collect::<String>()
+    ));
+
+    std::fs::write(
+        path,
+        format!("{}\n{}\n", header, serde_json::to_string(&record)?),
+    )?;
+    Ok(())
+}
+
 #[test]
 fn fail_run_with_no_args() -> Result<(), Box<dyn std::error::Error>> {
     let file = NamedTempFile::new()?;
@@ -86,7 +120,9 @@ fn add_update_remove_isolated_flow() -> Result<(), Box<dyn std::error::Error>> {
         .args([alias, "-c", CODE, "--password", PASSWORD])
         .assert()
         .success()
-        .stdout(predicate::str::contains(&stdout_removed));
+        .stdout(predicate::str::contains(format!(
+            "Record for '{alias}' successfully updated."
+        )));
 
     hermes(path)
         .arg("remove")
@@ -119,7 +155,7 @@ fn rename_alias_isolated_flow() -> Result<(), Box<dyn std::error::Error>> {
     // rename: github -> gh
     hermes(path)
         .arg("rename")
-        .args(["github", "gh"])
+        .args(["github", "gh", "--password", PASSWORD])
         .assert()
         .success()
         .stdout(predicate::str::contains("Successfully renamed"));
@@ -147,7 +183,7 @@ fn rename_alias_isolated_flow() -> Result<(), Box<dyn std::error::Error>> {
     // collision Check: try to rename 'gh' to 'google' (exists)
     hermes(path)
         .arg("rename")
-        .args(["gh", "google"])
+        .args(["gh", "google", "--password", PASSWORD])
         .assert()
         .failure()
         .stderr(predicate::str::contains("already exists"));
@@ -414,9 +450,11 @@ fn export_creates_valid_json() -> Result<(), Box<dyn std::error::Error>> {
 
     let content = std::fs::read_to_string(&export_path)?;
     let json: serde_json::Value = serde_json::from_str(&content)?;
-    assert!(json.is_array());
-    let arr = json.as_array().unwrap();
-    assert_eq!(arr.len(), 2);
+
+    // a vault is exported as an envelope carrying the wrapped key
+    assert_eq!(json["version"], 3);
+    assert!(json["vault"].as_str().unwrap().starts_with("v3w$"));
+    assert_eq!(json["records"].as_array().unwrap().len(), 2);
 
     Ok(())
 }
@@ -532,15 +570,14 @@ fn ls_wrong_password_exits_with_error() -> Result<(), Box<dyn std::error::Error>
         .assert()
         .success();
 
-    // wrong password: the code cannot be produced, so this must not exit 0
+    // wrong password: the vault key cannot be unwrapped, so this must not exit 0
     hermes(path)
         .arg("ls")
         .args(["github", "-q", "--password", "wrong-password"])
         .assert()
         .failure()
         .code(1)
-        .stderr(predicate::str::contains("could not produce a code"))
-        .stderr(predicate::str::contains("github"));
+        .stderr(predicate::str::contains("Incorrect password"));
 
     Ok(())
 }
@@ -588,9 +625,12 @@ fn ls_json_reports_error_field() -> Result<(), Box<dyn std::error::Error>> {
         .assert()
         .success();
 
+    // a tampered record fails authentication while the vault key still opens
+    tamper_first_record(path)?;
+
     let output = hermes(path)
         .arg("ls")
-        .args(["--password", "wrong-password", "--format", "json"])
+        .args(["--password", PASSWORD, "--format", "json"])
         .output()?;
 
     let json: serde_json::Value = serde_json::from_slice(&output.stdout)?;
@@ -705,9 +745,11 @@ fn ls_json_single_alias_error_is_object() -> Result<(), Box<dyn std::error::Erro
         .assert()
         .success();
 
+    tamper_first_record(path)?;
+
     let output = hermes(path)
         .arg("ls")
-        .args(["aws", "--password", "wrong-password", "--format", "json"])
+        .args(["aws", "--password", PASSWORD, "--format", "json"])
         .output()?;
 
     let json: serde_json::Value = serde_json::from_slice(&output.stdout)?;
@@ -830,35 +872,37 @@ fn update_leaves_other_records_untouched() -> Result<(), Box<dyn std::error::Err
     let file = NamedTempFile::new()?;
     let path = file.path();
 
-    // each record has its own password
     hermes(path)
         .arg("add")
-        .args(["github", "-c", CODE, "--password", "pw-github"])
+        .args(["github", "-c", CODE, "--password", PASSWORD])
         .assert()
         .success();
 
     hermes(path)
         .arg("add")
-        .args(["aws", "-c", CODE, "--password", "pw-aws"])
+        .args(["aws", "-c", CODE, "--password", PASSWORD])
         .assert()
         .success();
+
+    let before = std::fs::read_to_string(path)?;
+    let aws_line = before
+        .lines()
+        .find(|line| line.contains("\"aws\""))
+        .unwrap();
 
     hermes(path)
         .arg("update")
-        .args([
-            "github",
-            "-c",
-            "GEZDGNBVGY3TQOJQ",
-            "--password",
-            "pw-github",
-        ])
+        .args(["github", "-c", "GEZDGNBVGY3TQOJQ", "--password", PASSWORD])
         .assert()
         .success();
 
-    // the untouched record still opens with its own password
+    // the untouched record keeps its ciphertext and still opens
+    let after = std::fs::read_to_string(path)?;
+    assert!(after.contains(aws_line), "aws record must be untouched");
+
     hermes(path)
         .arg("ls")
-        .args(["aws", "-q", "--password", "pw-aws"])
+        .args(["aws", "-q", "--password", PASSWORD])
         .assert()
         .success()
         .stdout(predicate::str::is_match("^[0-9]{6}")?);
@@ -867,7 +911,7 @@ fn update_leaves_other_records_untouched() -> Result<(), Box<dyn std::error::Err
 }
 
 #[test]
-fn add_accepts_a_different_password_per_record() -> Result<(), Box<dyn std::error::Error>> {
+fn add_rejects_a_different_master_password() -> Result<(), Box<dyn std::error::Error>> {
     let file = NamedTempFile::new()?;
     let path = file.path();
 
@@ -877,20 +921,14 @@ fn add_accepts_a_different_password_per_record() -> Result<(), Box<dyn std::erro
         .assert()
         .success();
 
-    // a second record with a different password must be accepted: there is no
-    // vault-wide password to verify against
+    // the vault has one master password; a second one must not be accepted
     hermes(path)
         .arg("add")
         .args(["aws", "-c", CODE, "--password", "pw-aws"])
         .assert()
-        .success();
-
-    hermes(path)
-        .arg("ls")
-        .args(["aws", "-q", "--password", "pw-aws"])
-        .assert()
-        .success()
-        .stdout(predicate::str::is_match("^[0-9]{6}")?);
+        .failure()
+        .code(1)
+        .stderr(predicate::str::contains("Incorrect password"));
 
     Ok(())
 }
@@ -1432,7 +1470,7 @@ fn update_rejects_legacy_records() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 #[test]
-fn tampered_v2_record_reports_authentication_failure() -> Result<(), Box<dyn std::error::Error>> {
+fn tampered_record_reports_authentication_failure() -> Result<(), Box<dyn std::error::Error>> {
     let file = NamedTempFile::new()?;
     let path = file.path();
 
@@ -1442,31 +1480,7 @@ fn tampered_v2_record_reports_authentication_failure() -> Result<(), Box<dyn std
         .assert()
         .success();
 
-    let content = std::fs::read_to_string(path)?;
-    let mut record: serde_json::Value = serde_json::from_str(content.lines().next().unwrap())?;
-
-    let secret = record["secret"].as_str().unwrap().to_string();
-    let parts: Vec<&str> = secret.split('$').collect();
-    assert_eq!(parts.len(), 4, "expected a v2 payload");
-
-    // change one base64 character of the ciphertext, keeping it decodable
-    let mut ciphertext: Vec<char> = parts[3].chars().collect();
-    let position = ciphertext.iter().position(|c| *c != '=').unwrap();
-    ciphertext[position] = if ciphertext[position] == 'A' {
-        'B'
-    } else {
-        'A'
-    };
-
-    let tampered = format!(
-        "{}${}${}${}",
-        parts[0],
-        parts[1],
-        parts[2],
-        ciphertext.into_iter().collect::<String>()
-    );
-    record["secret"] = serde_json::Value::String(tampered);
-    std::fs::write(path, format!("{}\n", serde_json::to_string(&record)?))?;
+    tamper_first_record(path)?;
 
     hermes(path)
         .arg("ls")
@@ -1480,7 +1494,7 @@ fn tampered_v2_record_reports_authentication_failure() -> Result<(), Box<dyn std
 }
 
 #[test]
-fn passwd_rotates_the_password() -> Result<(), Box<dyn std::error::Error>> {
+fn passwd_rotates_the_master_password() -> Result<(), Box<dyn std::error::Error>> {
     let file = NamedTempFile::new()?;
     let path = file.path();
 
@@ -1490,23 +1504,18 @@ fn passwd_rotates_the_password() -> Result<(), Box<dyn std::error::Error>> {
         .assert()
         .success();
 
+    let before = std::fs::read_to_string(path)?;
+    let record_line = before.lines().last().unwrap().to_string();
+
     // add() takes its own backup; drop it so we only observe passwd's
     let _ = std::fs::remove_file(path.with_extension("bak"));
 
     hermes(path)
         .arg("passwd")
-        .args([
-            "secure",
-            "--password",
-            "old-pass",
-            "--new-password",
-            "new-pass",
-        ])
+        .args(["--password", "old-pass", "--new-password", "new-pass"])
         .assert()
         .success()
-        .stdout(predicate::str::contains(
-            "Password updated successfully for secure.",
-        ));
+        .stdout(predicate::str::contains("Master password updated."));
 
     // the new password works
     hermes(path)
@@ -1522,6 +1531,10 @@ fn passwd_rotates_the_password() -> Result<(), Box<dyn std::error::Error>> {
         .args(["secure", "-q", "--password", "old-pass"])
         .assert()
         .failure();
+
+    // only the wrapper changed; the record ciphertext is untouched
+    let after = std::fs::read_to_string(path)?;
+    assert_eq!(after.lines().last().unwrap(), record_line);
 
     assert!(
         path.with_extension("bak").exists(),
@@ -1553,13 +1566,7 @@ fn passwd_rejects_wrong_current_password() -> Result<(), Box<dyn std::error::Err
 
     hermes(path)
         .arg("passwd")
-        .args([
-            "secure",
-            "--password",
-            "wrong",
-            "--new-password",
-            "new-pass",
-        ])
+        .args(["--password", "wrong", "--new-password", "new-pass"])
         .assert()
         .failure()
         .code(1)
@@ -1591,12 +1598,12 @@ fn passwd_rejects_unencrypted_records() -> Result<(), Box<dyn std::error::Error>
 
     hermes(path)
         .arg("passwd")
-        .args(["plain", "--password", "a", "--new-password", "b"])
+        .args(["--password", "a", "--new-password", "b"])
         .assert()
         .failure()
         .code(1)
         .stderr(predicate::str::contains(
-            "Cannot change password of an unencrypted record.",
+            "No encrypted records in this vault.",
         ));
 
     assert_eq!(std::fs::read_to_string(path)?, before);
@@ -1615,13 +1622,7 @@ fn passwd_rejects_legacy_records() -> Result<(), Box<dyn std::error::Error>> {
 
     hermes(path)
         .arg("passwd")
-        .args([
-            "legacy",
-            "--password",
-            "old-pass",
-            "--new-password",
-            "new-pass",
-        ])
+        .args(["--password", "old-pass", "--new-password", "new-pass"])
         .assert()
         .failure()
         .code(1)
@@ -1639,17 +1640,16 @@ fn passwd_rejects_legacy_records() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 #[test]
-fn passwd_rejects_unknown_alias() -> Result<(), Box<dyn std::error::Error>> {
+fn passwd_rejects_a_positional_alias() -> Result<(), Box<dyn std::error::Error>> {
     let file = NamedTempFile::new()?;
     let path = file.path();
 
     hermes(path)
         .arg("passwd")
-        .args(["nope", "--password", "a", "--new-password", "b"])
+        .args(["secure", "--password", "a", "--new-password", "b"])
         .assert()
         .failure()
-        .code(1)
-        .stderr(predicate::str::contains("Record not found."));
+        .code(2);
 
     Ok(())
 }

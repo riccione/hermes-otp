@@ -227,6 +227,32 @@ pub fn create_routine_backup(path: &Path) -> io::Result<PathBuf> {
     perform_backup(path, "bak")
 }
 
+/// Copies the codex to `<name>.pre-v3.bak` once, before the first migration to
+/// the vault format.
+///
+/// The snapshot is only created when it does not exist yet, so repeated or
+/// partial migrations never overwrite the original v2 vault.
+pub fn backup_pre_v3(path: &Path) -> io::Result<Option<PathBuf>> {
+    if !path.exists() {
+        return Err(io::Error::new(
+            io::ErrorKind::NotFound,
+            "No codex file found to back up.",
+        ));
+    }
+
+    let mut backup_path = path.to_path_buf();
+    backup_path.set_extension("pre-v3.bak");
+
+    if backup_path.exists() {
+        return Ok(None);
+    }
+
+    std::fs::copy(path, &backup_path)?;
+    secure_file(&backup_path)?;
+
+    Ok(Some(backup_path))
+}
+
 /// Writes `data` atomically: a temp file in the same directory is written,
 /// flushed and renamed over `path`, so a crash cannot truncate the codex.
 pub fn overwrite_file_atomic(path: &Path, data: &str) -> io::Result<()> {

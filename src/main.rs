@@ -123,18 +123,18 @@ fn run(command: Commands, codex_path: PathBuf) -> Result<(), error::AppError> {
         }
 
         Commands::Passwd {
-            alias,
             password,
             new_password,
         } => {
-            cmd::passwd(&codex_path, &alias, &password, &new_password)?;
+            cmd::passwd(&codex_path, &password, &new_password)?;
         }
 
         Commands::Rename {
             old_alias,
             new_alias,
+            password,
         } => {
-            cmd::rename(&codex_path, &old_alias, &new_alias)?;
+            cmd::rename(&codex_path, &old_alias, &new_alias, &password)?;
         }
 
         Commands::Ls {
@@ -168,8 +168,8 @@ fn run(command: Commands, codex_path: PathBuf) -> Result<(), error::AppError> {
             cmd::export(&codex_path, &output)?;
         }
 
-        Commands::Import { input } => {
-            cmd::import(&codex_path, &input)?;
+        Commands::Import { input, password } => {
+            cmd::import(&codex_path, &input, &password)?;
         }
     }
     Ok(())

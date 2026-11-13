@@ -79,7 +79,14 @@ pub fn add(
     // reject parameters the generator could not honor
     otp::validate_params(algorithm, digits, period)?;
 
-    if file::file_exists(path) && file::alias_exists(alias, path) {
+    let existed = file::file_exists(path);
+    let mut codex = if existed {
+        file::read_codex(path)?
+    } else {
+        file::Codex::default()
+    };
+
+    if codex.records.iter().any(|r| r.alias == *alias) {
         return Err(format!("Error: Alias '{alias}' already exists."));
     }
 
@@ -91,25 +98,24 @@ pub fn add(
             .map_err(|e| e.as_str().to_string())?
     };
 
-    // serialize and save
     let record = Record::new(
         alias.to_string(),
-        secret.to_string(),
+        secret,
         *is_unencrypt,
         algorithm.to_string(),
         digits as u8,
         period,
     );
-    let json_data = serde_json::to_string(&record).map_err(|e| e.to_string())?;
+
+    codex.records.push(record.clone());
 
     file::ensure_dir_exists(path).map_err(|e| e.to_string())?;
 
-    if file::file_exists(path) {
+    if existed {
         file::create_routine_backup(path).map_err(|e| format!("Warning: Backup failed: {}", e))?;
-        file::append_to_file(path, &json_data).map_err(|e| e.to_string())?;
-    } else {
-        file::overwrite_file(path, &json_data).map_err(|e| e.to_string())?;
     }
+
+    file::write_codex_atomic(path, &codex)?;
 
     println!("Record saved.");
 
@@ -136,8 +142,9 @@ pub fn update_code(
     let clean_code = sanitize_and_validate_code(new_code)?;
 
     // Locate the record first: we need to know whether it is encrypted.
-    let records = file::read_codex(path)?;
-    let existing = records
+    let codex = file::read_codex(path)?;
+    let existing = codex
+        .records
         .iter()
         .find(|r| r.alias == *alias)
         .ok_or_else(|| format!("No record for '{alias}' found."))?;
@@ -182,20 +189,21 @@ pub fn passwd(
     current: &Option<String>,
     new: &Option<String>,
 ) -> Result<(), String> {
-    let mut records = file::read_codex(path)?;
+    let mut codex = file::read_codex(path)?;
 
     // exact, case-sensitive matching, like update/remove/rename
-    let index = records
+    let index = codex
+        .records
         .iter()
         .position(|r| r.alias == *alias)
         .ok_or("Record not found.")?;
 
-    if records[index].is_unencrypted {
+    if codex.records[index].is_unencrypted {
         return Err("Cannot change password of an unencrypted record.".into());
     }
 
     let current_password = resolve_current_password(current)?;
-    let plaintext = decrypt_user_secret(&records[index].secret, &current_password)?;
+    let plaintext = decrypt_user_secret(&codex.records[index].secret, &current_password)?;
 
     let new_password = match new {
         Some(password) => password.clone(),
@@ -203,10 +211,10 @@ pub fn passwd(
     };
 
     // rotations always store the authenticated v2 format
-    records[index].secret =
+    codex.records[index].secret =
         crypto::encrypt_v2(&plaintext, &new_password).map_err(|e| e.as_str().to_string())?;
 
-    save_records_routine(path, &records)?;
+    save_records_routine(path, &codex)?;
 
     println!("Password updated successfully for {alias}.");
     Ok(())
@@ -237,42 +245,26 @@ fn prompt_new_password() -> Result<String, String> {
     Ok(first)
 }
 
-/// Writes all records after taking the routine `codex.bak` snapshot.
-fn save_records_routine(path: &Path, records: &[Record]) -> Result<(), String> {
+/// Writes the codex after taking the routine `codex.bak` snapshot.
+fn save_records_routine(path: &Path, codex: &file::Codex) -> Result<(), String> {
     file::create_routine_backup(path).map_err(|e| format!("Could not create backup: {e}"))?;
 
-    let lines: Vec<String> = records
-        .iter()
-        .map(serde_json::to_string)
-        .collect::<Result<Vec<String>, serde_json::Error>>()
-        .map_err(|e| format!("Serialization error: {e}"))?;
-
-    let content = lines.join("\n") + "\n";
-    file::overwrite_file_atomic(path, &content).map_err(|e| format!("Could not save changes: {e}"))
+    file::write_codex_atomic(path, codex).map_err(|e| format!("Could not save changes: {e}"))
 }
 
 pub fn remove(path: &Path, alias: &str) -> Result<(), String> {
     file::create_routine_backup(path).map_err(|e| format!("Warning: Backup failed: {}", e))?;
 
-    let records = file::read_codex(path)?;
-    let original_len = records.len();
+    let mut codex = file::read_codex(path)?;
+    let original_len = codex.records.len();
 
-    let filtered_records: Vec<Record> = records.into_iter().filter(|r| r.alias != alias).collect();
+    codex.records.retain(|r| r.alias != alias);
 
-    if filtered_records.len() == original_len {
+    if codex.records.len() == original_len {
         return Err(format!("Error: No record for '{alias}' found"));
     }
 
-    // Convert the Records back to JSON
-    let lines: Vec<String> = filtered_records
-        .iter()
-        .map(serde_json::to_string)
-        .collect::<Result<Vec<String>, serde_json::Error>>()
-        .map_err(|e| format!("Serialization error: {e}"))?;
-
-    let data = lines.join("\n") + "\n";
-
-    file::overwrite_file(path, &data).map_err(|e| format!("Error: Failed to save changes: {e}"))?;
+    file::write_codex_atomic(path, &codex)?;
 
     println!("Record for {alias} removed.");
     Ok(())
@@ -289,7 +281,7 @@ pub fn ls(
     exact_match: bool,
     fuzzy: bool,
 ) -> Result<(), AppError> {
-    let records = file::read_codex(path)?;
+    let records = file::read_codex(path)?.records;
 
     // Indices of the matching records, in display order.
     let matched: Vec<usize> = if let Some(filter) = alias_filter {
@@ -587,10 +579,10 @@ pub fn rename(path: &Path, old_alias: &str, new_alias: &str) -> Result<(), Strin
     }
 
     // read the file
-    let mut records = file::read_codex(path)?;
+    let mut codex = file::read_codex(path)?;
     let mut found = false;
 
-    for record in records.iter_mut() {
+    for record in codex.records.iter_mut() {
         if record.alias == old_alias {
             record.alias = new_alias.to_string();
             found = true;
@@ -604,15 +596,7 @@ pub fn rename(path: &Path, old_alias: &str, new_alias: &str) -> Result<(), Strin
 
     file::create_routine_backup(path).map_err(|e| format!("Warning: Backup failed: {}", e))?;
 
-    let lines: Vec<String> = records
-        .iter()
-        .map(serde_json::to_string)
-        .collect::<Result<Vec<String>, serde_json::Error>>()
-        .map_err(|e| format!("Serialization error: {e}"))?;
-
-    let data = lines.join("\n") + "\n";
-
-    file::overwrite_file(path, &data).map_err(|e| format!("Error saving changes: {e}"))?;
+    file::write_codex_atomic(path, &codex)?;
 
     println!("Successfully renamed '{}' to '{}'", old_alias, new_alias);
     Ok(())
@@ -627,7 +611,14 @@ pub fn add_from_otpauth(
     let parsed = OtpAuth::parse(uri)?;
     let alias = parsed.alias.clone();
 
-    if file::file_exists(path) && file::alias_exists(&alias, path) {
+    let existed = file::file_exists(path);
+    let mut codex = if existed {
+        file::read_codex(path)?
+    } else {
+        file::Codex::default()
+    };
+
+    if codex.records.iter().any(|r| r.alias == alias) {
         return Err(format!("Error: Alias '{alias}' already exists."));
     }
 
@@ -638,7 +629,7 @@ pub fn add_from_otpauth(
             .map_err(|e| e.as_str().to_string())?
     };
 
-    let record = Record {
+    codex.records.push(Record {
         alias: alias.clone(),
         secret,
         is_unencrypted: *is_unencrypt,
@@ -646,17 +637,15 @@ pub fn add_from_otpauth(
         digits: parsed.digits,
         period: parsed.period,
         created_at: parsed.created_at,
-    };
+    });
 
-    let json_data = serde_json::to_string(&record).map_err(|e| e.to_string())?;
     file::ensure_dir_exists(path).map_err(|e| e.to_string())?;
 
-    if file::file_exists(path) {
+    if existed {
         file::create_routine_backup(path).map_err(|e| format!("Warning: Backup failed: {}", e))?;
-        file::append_to_file(path, &json_data).map_err(|e| e.to_string())?;
-    } else {
-        file::overwrite_file(path, &json_data).map_err(|e| e.to_string())?;
     }
+
+    file::write_codex_atomic(path, &codex)?;
 
     println!("Record saved: {alias}");
     Ok(())
@@ -673,23 +662,20 @@ pub fn add_batch(
 
     file::ensure_dir_exists(path).map_err(|e| e.to_string())?;
 
-    let mut current_records = if file::file_exists(path) {
+    let existed = file::file_exists(path);
+    let mut codex = if existed {
         file::read_codex(path)?
     } else {
-        Vec::new()
+        file::Codex::default()
     };
 
     for parsed in &parsed_records {
-        if current_records.iter().any(|r| r.alias == parsed.alias) {
+        if codex.records.iter().any(|r| r.alias == parsed.alias) {
             return Err(format!(
                 "Error: Alias '{}' already exists. Aborting batch.",
                 parsed.alias
             ));
         }
-    }
-
-    if file::file_exists(path) {
-        file::create_routine_backup(path).map_err(|e| format!("Warning: Backup failed: {}", e))?;
     }
 
     let pass = if *is_unencrypt {
@@ -706,7 +692,7 @@ pub fn add_batch(
                 .map_err(|e| e.as_str().to_string())?
         };
 
-        let record = Record {
+        codex.records.push(Record {
             alias: parsed.alias,
             secret,
             is_unencrypted: *is_unencrypt,
@@ -714,34 +700,28 @@ pub fn add_batch(
             digits: parsed.digits,
             period: parsed.period,
             created_at: parsed.created_at,
-        };
-
-        current_records.push(record);
+        });
     }
 
-    let lines: Vec<String> = current_records
-        .iter()
-        .map(serde_json::to_string)
-        .collect::<Result<Vec<String>, serde_json::Error>>()
-        .map_err(|e| format!("Serialization error: {e}"))?;
+    if existed {
+        file::create_routine_backup(path).map_err(|e| format!("Warning: Backup failed: {}", e))?;
+    }
 
-    let content = lines.join("\n") + "\n";
-    file::overwrite_file(path, &content)
-        .map_err(|e| format!("Error: Failed to save changes: {e}"))?;
+    file::write_codex_atomic(path, &codex)?;
 
     println!("Successfully imported {count} records.");
     Ok(())
 }
 
 pub fn export(codex_path: &Path, output_path: &Path) -> Result<(), String> {
-    let records = file::read_codex(codex_path)?;
+    let codex = file::read_codex(codex_path)?;
 
-    if records.is_empty() {
+    if codex.records.is_empty() {
         return Err("No records to export.".to_string());
     }
 
-    let json =
-        serde_json::to_string_pretty(&records).map_err(|e| format!("Serialization error: {e}"))?;
+    let json = serde_json::to_string_pretty(&codex.records)
+        .map_err(|e| format!("Serialization error: {e}"))?;
 
     file::ensure_dir_exists(output_path).map_err(|e| e.to_string())?;
     std::fs::write(output_path, &json)
@@ -750,7 +730,7 @@ pub fn export(codex_path: &Path, output_path: &Path) -> Result<(), String> {
 
     println!(
         "Exported {} records to '{}'.",
-        records.len(),
+        codex.records.len(),
         output_path.display()
     );
     Ok(())
@@ -767,14 +747,14 @@ pub fn import(codex_path: &Path, input_path: &Path) -> Result<(), String> {
         return Err("No records found in import file.".to_string());
     }
 
-    let existing = if file::file_exists(codex_path) {
+    let mut codex = if file::file_exists(codex_path) {
         file::read_codex(codex_path)?
     } else {
-        Vec::new()
+        file::Codex::default()
     };
 
     for record in &imported {
-        if existing.iter().any(|r| r.alias == record.alias) {
+        if codex.records.iter().any(|r| r.alias == record.alias) {
             return Err(format!(
                 "Error: Alias '{}' already exists in codex. Aborting import.",
                 record.alias
@@ -803,22 +783,13 @@ pub fn import(codex_path: &Path, input_path: &Path) -> Result<(), String> {
             .map_err(|e| format!("Warning: Backup failed: {e}"))?;
     }
 
-    let mut all_records = existing;
     for record in imported {
-        all_records.push(record);
+        codex.records.push(record);
     }
 
-    let lines: Vec<String> = all_records
-        .iter()
-        .map(serde_json::to_string)
-        .collect::<Result<Vec<String>, serde_json::Error>>()
-        .map_err(|e| format!("Serialization error: {e}"))?;
+    file::write_codex_atomic(codex_path, &codex)?;
 
-    let content = lines.join("\n") + "\n";
-    file::overwrite_file(codex_path, &content)
-        .map_err(|e| format!("Error: Failed to save changes: {e}"))?;
-
-    let count = all_records.len();
+    let count = codex.records.len();
     println!("Successfully imported {count} records total.");
     Ok(())
 }

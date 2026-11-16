@@ -14,7 +14,7 @@ This document outlines the planned development and architectural changes for Her
   - *Why:* Currently, `ls` runs Argon2 for *every* record, causing a 1-2 second delay on large vaults. 
   - *How:* Switch to a single randomly generated "Vault Key" that encrypts all records (using fast XChaCha20). The Vault Key itself is encrypted by the Master Password (via Argon2). Argon2 only runs once per command, making `ls` instant.
 - [ ] **Publish to crates.io:** Allow users to install via `cargo install hermes-otp`.
-- [ ] **Shell Completions:** Add `clap_complete` to generate autocompletion scripts for Bash, Zsh, and Fish.
+- [x] **Shell Completions:** Add `clap_complete` to generate autocompletion scripts for Bash, Zsh, and Fish.
 
 ## Backlog / Nice to Have
 - [ ] **Clipboard Support:** Add a `-c` or `--copy` flag to `ls` to automatically copy the code to the clipboard (requires `arboard` crate).

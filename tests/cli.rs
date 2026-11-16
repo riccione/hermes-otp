@@ -2002,3 +2002,43 @@ fn rename_rejects_a_wrong_password() -> Result<(), Box<dyn std::error::Error>> {
 
     Ok(())
 }
+
+#[test]
+fn completions_are_generated_for_supported_shells() -> Result<(), Box<dyn std::error::Error>> {
+    let file = NamedTempFile::new()?;
+    let path = file.path();
+
+    for (shell, marker) in [
+        ("bash", "complete -F"),
+        ("zsh", "#compdef hermes-otp"),
+        ("fish", "complete -c hermes-otp"),
+        ("elvish", "arg-completer[hermes-otp]"),
+        ("powershell", "CommandName 'hermes-otp'"),
+    ] {
+        hermes(path)
+            .arg("completions")
+            .arg(shell)
+            .assert()
+            .success()
+            .stdout(predicate::str::contains(marker))
+            .stdout(predicate::str::contains("hermes-otp"))
+            .stdout(predicate::str::contains("passwd"));
+    }
+
+    Ok(())
+}
+
+#[test]
+fn completions_reject_an_unknown_shell() -> Result<(), Box<dyn std::error::Error>> {
+    let file = NamedTempFile::new()?;
+    let path = file.path();
+
+    hermes(path)
+        .arg("completions")
+        .arg("tcsh")
+        .assert()
+        .failure()
+        .code(2);
+
+    Ok(())
+}

@@ -45,6 +45,7 @@ argon2 = "0.6"
 base64 = "0.23"
 chacha20poly1305 = "0.11"
 clap = { version = "4.6", features = ["derive"] }
+clap_complete = "4.6"
 data-encoding = "2.11"
 dirs = "7.0"
 getrandom = "0.4"

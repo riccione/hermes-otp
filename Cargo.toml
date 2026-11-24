@@ -37,7 +37,8 @@ allow-branch = ["release/v*"]
 [profile.release]
 strip = true
 lto = true
-#panic = "abort"
+panic = "abort"
+codegen-units = 1
 opt-level = "z"
 
 [dependencies]

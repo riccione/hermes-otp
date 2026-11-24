@@ -135,6 +135,12 @@ pub enum Commands {
     },
     /// Show location of codex file
     Config {},
+    /// Print a shell completion script to stdout
+    Completions {
+        /// Shell to generate completions for
+        #[arg(value_enum)]
+        shell: clap_complete::aot::Shell,
+    },
     /// Export codex to a JSON file
     Export {
         /// Output file path

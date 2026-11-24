@@ -1,3 +1,4 @@
+use std::io::Write;
 use std::path::PathBuf;
 
 mod args;
@@ -11,7 +12,7 @@ mod otpauth;
 mod ui;
 
 use args::{Cli, Commands};
-use clap::Parser;
+use clap::{CommandFactory, Parser};
 use error::EXIT_PARTIAL;
 
 fn main() {
@@ -162,6 +163,17 @@ fn run(command: Commands, codex_path: PathBuf) -> Result<(), error::AppError> {
                 .exists()
                 .then(|| println!("{}", codex_path.display()))
                 .ok_or_else(|| format!("Codex file does not exists at {}", codex_path.display()))?;
+        }
+
+        Commands::Completions { shell } => {
+            let mut command = Cli::command();
+            let bin_name = command.get_name().to_string();
+            let mut script = Vec::new();
+            clap_complete::aot::generate(shell, &mut command, bin_name, &mut script);
+
+            std::io::stdout()
+                .write_all(&script)
+                .map_err(|e| format!("could not write completions: {e}"))?;
         }
 
         Commands::Export { output } => {

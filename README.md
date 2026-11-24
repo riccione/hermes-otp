@@ -43,9 +43,8 @@ countdown bar and the prompt, so it is safe to pipe.
   standard exit codes.
 - **Full RFC 6238 support:** SHA-1, SHA-256 and SHA-512 records with custom
   digits (6–8) and periods (1–300 s), added directly or imported.
-- **Encrypted at rest:** each record is encrypted independently with
-  XChaCha20-Poly1305, keyed by Argon2id; the codex is `0600` and its directory
-  is `0700`.
+- **Encrypted at rest:** records share a random vault key (XChaCha20-Poly1305)
+  wrapped with Argon2id; the codex is `0600` and its directory is `0700`.
 - **Single ~1 MB binary:** no runtime, no interpreter, no GPG dependency.
 - **Live when you want it, quiet when you don't:** an auto-refreshing view for
   humans and a strict non-interactive mode for machines.
@@ -119,6 +118,24 @@ git clone https://github.com/riccione/hermes-otp
 cd hermes-otp
 cargo build --release
 ```
+
+### Shell completions
+
+`completions` prints a completion script for `bash`, `zsh`, `fish`, `elvish`,
+or `powershell` on stdout:
+
+```sh
+# Bash
+hermes-otp completions bash > ~/.local/share/bash-completion/completions/hermes-otp
+
+# Zsh (keep ~/.zfunc on $fpath)
+hermes-otp completions zsh > ~/.zfunc/_hermes-otp
+
+# Fish
+hermes-otp completions fish > ~/.config/fish/completions/hermes-otp.fish
+```
+
+Restart the shell, or source the generated file, to pick them up.
 
 ## Quick Start
 
@@ -246,6 +263,7 @@ significant.
 | `rename <OLD> <NEW>` | Rename an alias (`--password` for encrypted records). |
 | `ls [ALIAS]` | List codes; a partial match filters, `--exact` is case-sensitive. |
 | `config` | Show the codex path. |
+| `completions <SHELL>` | Print a completion script (`bash`, `zsh`, `fish`, `elvish`, `powershell`). |
 | `export -o <FILE>` | Export records (v3 vaults include the wrapped key). |
 | `import <FILE>` | Import records; `--password` for vault envelopes. |
 

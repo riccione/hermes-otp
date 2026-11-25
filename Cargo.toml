@@ -3,10 +3,12 @@ name = "hermes-otp"
 version = "1.0.0"
 edition = "2024"
 license = "MIT"
-description = "Hermes-OTP: CLI OTP manager app"
+description = "Hermes-OTP: a CLI TOTP manager for your terminal and your pipelines."
 homepage = "https://github.com/riccione/hermes-otp"
 documentation = "https://github.com/riccione/hermes-otp"
 repository = "https://github.com/riccione/hermes-otp"
+keywords = ["otp", "totp", "cli", "security"]
+categories = ["command-line-utilities", "authentication"]
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 

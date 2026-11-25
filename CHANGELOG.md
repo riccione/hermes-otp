@@ -1,3 +1,8 @@
+## [1.0.1] - 2026-11-25
+
+### Miscellaneous Tasks
+
+- Update dependencies in lock file
 ## [1.0.0] - 2026-11-25
 
 ### Documentation
@@ -10,6 +15,11 @@
 
 - [**breaking**] Encrypt records with a single vault key
 - *(cli)* Add shell completions command
+
+### Miscellaneous Tasks
+
+- Release hermes-otp version 1.0.0
+- *(cargo)* Update crate description and add crates.io metadata
 
 ### Other
 

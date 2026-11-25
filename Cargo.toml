@@ -1,6 +1,6 @@
 [package]
 name = "hermes-otp"
-version = "1.0.0"
+version = "1.0.1"
 edition = "2024"
 license = "MIT"
 description = "Hermes-OTP: a CLI TOTP manager for your terminal and your pipelines."

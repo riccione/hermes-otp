@@ -1,3 +1,32 @@
+## [1.0.0] - 2026-11-25
+
+### Documentation
+
+- *(readme)* Add installation snippet for linux musl binary
+- *(readme)* Document the v3 vault format
+- *(readme)* Document shell completions
+
+### Features
+
+- [**breaking**] Encrypt records with a single vault key
+- *(cli)* Add shell completions command
+
+### Other
+
+- *(release)* Enable panic = "abort" and single codegen unit
+
+### Performance
+
+- *(update)* Reuse the unlocked vault key
+
+### Refactor
+
+- *(file)* Model the codex as a vault plus records
+
+### Testing
+
+- Cover v3 migration and master password rotation
+- Cover shell completion scripts
 ## [0.9.0] - 2026-11-09
 
 ### Bug Fixes
@@ -15,6 +44,8 @@
 - Bump riccione/github-workflows/.github/workflows/rust-relese.yml
 - Grant OIDC token permission for release signing
 - Update reusable release workflow reference (composite checksum sign action) (#111)
+- Release hermes-otp version 0.9.0
+- *(release)* Enable musl build for hermes-otp
 
 ### Other
 

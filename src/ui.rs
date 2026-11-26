@@ -61,12 +61,12 @@ impl<'a, 'b> Table<'a, 'b> {
     }
 }
 
-impl<'a, 'b> Drop for Table<'a, 'b> {
+impl Drop for Table<'_, '_> {
     fn drop(&mut self) {
-        // Safe exit (also works in case of panic)
+        // Best-effort cleanup: must never panic, especially during unwinding.
         let term = Term::stdout();
-        term.show_cursor().unwrap();
-        term.move_cursor_down(usize::MAX).unwrap();
-        term.clear_last_lines(1).unwrap() // Clear "press any key to exit" line
+        let _ = term.show_cursor();
+        let _ = term.move_cursor_down(usize::MAX);
+        let _ = term.clear_last_lines(1);
     }
 }

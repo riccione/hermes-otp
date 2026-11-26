@@ -917,7 +917,7 @@ pub fn export(codex_path: &Path, output_path: &Path) -> Result<(), String> {
     .map_err(|e| format!("Serialization error: {e}"))?;
 
     file::ensure_dir_exists(output_path).map_err(|e| e.to_string())?;
-    std::fs::write(output_path, &json)
+    file::overwrite_file_atomic(output_path, &json)
         .map_err(|e| format!("Error writing to '{}': {e}", output_path.display()))?;
     file::secure_file(output_path).map_err(|e| e.to_string())?;
 

@@ -214,6 +214,14 @@ We believe in being honest about cryptography.
 - **Passwords are never stored:** resolution order is `--password` →
   `HERMES_OTP_PASSWORD` → interactive prompt.
 
+### Concurrency
+
+Mutating commands hold an advisory exclusive lock on `<codex>.lock` for the
+whole read-modify-write, so parallel scripts cannot lose records. The lock file
+is empty, never contains secrets, and stays next to the codex; the OS releases
+a crashed process's lock. The lock is advisory, so only cooperating
+`hermes-otp` processes are serialized.
+
 ### Upgrading old vaults
 
 **v1 (before 0.8.0):** the `magic-crypt` AES-CBC format (RUSTSEC-2024-0430) was

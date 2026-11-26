@@ -182,6 +182,17 @@ pub fn add(
     // reject parameters the generator could not honor
     otp::validate_params(algorithm, digits, period)?;
 
+    // Resolve the password before taking the lock so an interactive prompt
+    // cannot block other processes.
+    let pass = if *is_unencrypt {
+        None
+    } else {
+        Some(get_effective_password(password)?)
+    };
+
+    file::ensure_dir_exists(path).map_err(|e| e.to_string())?;
+    let _lock = file::lock_codex(path)?;
+
     let existed = file::file_exists(path);
     let mut codex = if existed {
         file::read_codex(path)?
@@ -197,7 +208,7 @@ pub fn add(
     let secret = if *is_unencrypt {
         clean_code.clone()
     } else {
-        let key = vault_key(path, &mut codex, password, KeyMode::CreateIfMissing, false)?
+        let key = vault_key(path, &mut codex, &pass, KeyMode::CreateIfMissing, false)?
             .ok_or("No vault key available.")?;
         crypto::encrypt_record(&clean_code, &key, alias).map_err(|e| e.as_str().to_string())?
     };
@@ -212,8 +223,6 @@ pub fn add(
     );
 
     codex.records.push(record.clone());
-
-    file::ensure_dir_exists(path).map_err(|e| e.to_string())?;
 
     if existed {
         file::create_routine_backup(path).map_err(|e| format!("Warning: Backup failed: {}", e))?;
@@ -244,6 +253,8 @@ pub fn update_code(
     password: &Option<String>,
 ) -> Result<(), String> {
     let clean_code = sanitize_and_validate_code(new_code)?;
+
+    let _lock = file::lock_codex(path)?;
 
     // Locate the record first: we need to know whether it is encrypted.
     let mut codex = file::read_codex(path)?;
@@ -303,13 +314,21 @@ pub fn update_code(
 
 /// Changes the master password by re-wrapping the vault key.
 pub fn passwd(path: &Path, current: &Option<String>, new: &Option<String>) -> Result<(), String> {
+    // Resolve the passwords before taking the lock so interactive prompts do
+    // not block other processes.
+    let current_password = resolve_current_password(current)?;
+    let new_password = match new {
+        Some(password) => password.clone(),
+        None => prompt_new_password()?,
+    };
+
+    let _lock = file::lock_codex(path)?;
     let mut codex = file::read_codex(path)?;
 
     if codex.vault.is_none() && codex.records.iter().all(|record| record.is_unencrypted) {
         return Err("No encrypted records in this vault. Nothing to change.".into());
     }
 
-    let current_password = resolve_current_password(current)?;
     let key = vault_key(
         path,
         &mut codex,
@@ -318,11 +337,6 @@ pub fn passwd(path: &Path, current: &Option<String>, new: &Option<String>) -> Re
         false,
     )?
     .ok_or("No vault key available.")?;
-
-    let new_password = match new {
-        Some(password) => password.clone(),
-        None => prompt_new_password()?,
-    };
 
     // Only the wrapper changes; record ciphertexts stay untouched.
     codex.vault =
@@ -367,7 +381,7 @@ fn save_records_routine(path: &Path, codex: &file::Codex) -> Result<(), String> 
 }
 
 pub fn remove(path: &Path, alias: &str) -> Result<(), String> {
-    file::create_routine_backup(path).map_err(|e| format!("Warning: Backup failed: {}", e))?;
+    let _lock = file::lock_codex(path)?;
 
     let mut codex = file::read_codex(path)?;
     let original_len = codex.records.len();
@@ -378,6 +392,7 @@ pub fn remove(path: &Path, alias: &str) -> Result<(), String> {
         return Err(format!("Error: No record for '{alias}' found"));
     }
 
+    file::create_routine_backup(path).map_err(|e| format!("Warning: Backup failed: {}", e))?;
     file::write_codex_atomic(path, &codex)?;
 
     println!("Record for {alias} removed.");
@@ -395,105 +410,117 @@ pub fn ls(
     exact_match: bool,
     fuzzy: bool,
 ) -> Result<(), AppError> {
-    let mut codex = file::read_codex(path)?;
-
-    // Indices of the matching records, in display order.
-    let matched: Vec<usize> = if let Some(filter) = alias_filter {
-        if fuzzy {
-            let mut matcher = nucleo_matcher::Matcher::new(Config::DEFAULT);
-
-            let mut scored: Vec<(u32, usize)> = codex
-                .records
-                .iter()
-                .enumerate()
-                .filter_map(|(index, r)| {
-                    let mut buf = Vec::new();
-                    let haystack = Utf32Str::new(&r.alias, &mut buf);
-                    let mut fbuf = Vec::new();
-                    let needle = Utf32Str::new(filter, &mut fbuf);
-                    matcher
-                        .fuzzy_match(haystack, needle)
-                        .map(|score| (score as u32, index))
-                })
-                .collect();
-
-            scored.sort_by_key(|b| std::cmp::Reverse(b.0));
-            scored.into_iter().map(|(_, index)| index).collect()
-        } else if exact_match {
-            // exact match is case-sensitive, like remove/rename/update
-            codex
-                .records
-                .iter()
-                .enumerate()
-                .filter(|(_, r)| r.alias == *filter)
-                .map(|(index, _)| index)
-                .collect()
+    // The lock only covers the read and the lazy v2->v3 migration. The live
+    // UI below must not hold it while waiting for a keypress.
+    let (codex, matched, key) = {
+        let _lock = if path.exists() {
+            Some(file::lock_codex(path)?)
         } else {
-            // partial match is case-insensitive
-            let filter_lower = filter.to_lowercase();
-            codex
-                .records
-                .iter()
-                .enumerate()
-                .filter(|(_, r)| r.alias.to_lowercase().contains(&filter_lower))
-                .map(|(index, _)| index)
-                .collect()
-        }
-    } else {
-        (0..codex.records.len()).collect()
-    };
+            None
+        };
 
-    if matched.is_empty() {
-        return Err(if let Some(filter) = alias_filter {
-            if exact_match {
-                format!("No record found with exact alias '{}'", filter)
+        let mut codex = file::read_codex(path)?;
+
+        // Indices of the matching records, in display order.
+        let matched: Vec<usize> = if let Some(filter) = alias_filter {
+            if fuzzy {
+                let mut matcher = nucleo_matcher::Matcher::new(Config::DEFAULT);
+
+                let mut scored: Vec<(u32, usize)> = codex
+                    .records
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(index, r)| {
+                        let mut buf = Vec::new();
+                        let haystack = Utf32Str::new(&r.alias, &mut buf);
+                        let mut fbuf = Vec::new();
+                        let needle = Utf32Str::new(filter, &mut fbuf);
+                        matcher
+                            .fuzzy_match(haystack, needle)
+                            .map(|score| (score as u32, index))
+                    })
+                    .collect();
+
+                scored.sort_by_key(|b| std::cmp::Reverse(b.0));
+                scored.into_iter().map(|(_, index)| index).collect()
+            } else if exact_match {
+                // exact match is case-sensitive, like remove/rename/update
+                codex
+                    .records
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, r)| r.alias == *filter)
+                    .map(|(index, _)| index)
+                    .collect()
             } else {
-                format!("No records found matching '{}'", filter)
+                // partial match is case-insensitive
+                let filter_lower = filter.to_lowercase();
+                codex
+                    .records
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, r)| r.alias.to_lowercase().contains(&filter_lower))
+                    .map(|(index, _)| index)
+                    .collect()
             }
         } else {
-            "No records found".into()
+            (0..codex.records.len()).collect()
+        };
+
+        if matched.is_empty() {
+            return Err(if let Some(filter) = alias_filter {
+                if exact_match {
+                    format!("No record found with exact alias '{}'", filter)
+                } else {
+                    format!("No records found matching '{}'", filter)
+                }
+            } else {
+                "No records found".into()
+            }
+            .into());
         }
-        .into());
-    }
 
-    // The legacy v1 format was removed: fail before rendering instead of
-    // silently producing an empty or partial table.
-    if !is_unencrypt {
-        let legacy: Vec<&str> = matched
-            .iter()
-            .map(|&index| &codex.records[index])
-            .filter(|record| {
-                !record.is_unencrypted
-                    && !crypto::is_v2(&record.secret)
-                    && !crypto::is_v3(&record.secret)
-            })
-            .map(|record| record.alias.as_str())
-            .collect();
+        // The legacy v1 format was removed: fail before rendering instead of
+        // silently producing an empty or partial table.
+        if !is_unencrypt {
+            let legacy: Vec<&str> = matched
+                .iter()
+                .map(|&index| &codex.records[index])
+                .filter(|record| {
+                    !record.is_unencrypted
+                        && !crypto::is_v2(&record.secret)
+                        && !crypto::is_v3(&record.secret)
+                })
+                .map(|record| record.alias.as_str())
+                .collect();
 
-        if !legacy.is_empty() {
-            return Err(AppError::from(format!(
-                "legacy v1 record(s) are no longer supported: {}. \
-                 Run hermes-otp 0.8.x to migrate them first.",
-                legacy.join(", ")
-            )));
+            if !legacy.is_empty() {
+                return Err(AppError::from(format!(
+                    "legacy v1 record(s) are no longer supported: {}. \
+                     Run hermes-otp 0.8.x to migrate them first.",
+                    legacy.join(", ")
+                )));
+            }
         }
-    }
 
-    let needs_password = !is_unencrypt
-        && matched
-            .iter()
-            .any(|&index| !codex.records[index].is_unencrypted);
+        let needs_password = !is_unencrypt
+            && matched
+                .iter()
+                .any(|&index| !codex.records[index].is_unencrypted);
 
-    let pass = needs_password
-        .then(|| get_effective_password(password))
-        .transpose()?;
+        let pass = needs_password
+            .then(|| get_effective_password(password))
+            .transpose()?;
 
-    // Argon2 runs once here, when the vault key is unwrapped (or a v2 vault is
-    // migrated); the records themselves only need fast XChaCha20.
-    let key = if needs_password {
-        vault_key(path, &mut codex, &pass, KeyMode::ExistingOnly, quiet)?
-    } else {
-        None
+        // Argon2 runs once here, when the vault key is unwrapped (or a v2
+        // vault is migrated); the records themselves only need fast XChaCha20.
+        let key = if needs_password {
+            vault_key(path, &mut codex, &pass, KeyMode::ExistingOnly, quiet)?
+        } else {
+            None
+        };
+
+        (codex, matched, key)
     };
 
     // Decrypt each matched record exactly once. This keeps decryption out of
@@ -697,12 +724,15 @@ pub fn rename(
     new_alias: &str,
     password: &Option<String>,
 ) -> Result<(), String> {
-    if file::alias_exists(new_alias, path) {
-        return Err(format!("Alias '{new_alias}' already exists."));
-    }
+    let _lock = file::lock_codex(path)?;
 
     // read the file
     let mut codex = file::read_codex(path)?;
+
+    if codex.records.iter().any(|record| record.alias == new_alias) {
+        return Err(format!("Alias '{new_alias}' already exists."));
+    }
+
     let index = codex
         .records
         .iter()
@@ -745,6 +775,15 @@ pub fn add_from_otpauth(
     let parsed = OtpAuth::parse(uri)?;
     let alias = parsed.alias.clone();
 
+    let pass = if *is_unencrypt {
+        None
+    } else {
+        Some(get_effective_password(password)?)
+    };
+
+    file::ensure_dir_exists(path).map_err(|e| e.to_string())?;
+    let _lock = file::lock_codex(path)?;
+
     let existed = file::file_exists(path);
     let mut codex = if existed {
         file::read_codex(path)?
@@ -759,7 +798,7 @@ pub fn add_from_otpauth(
     let secret = if *is_unencrypt {
         parsed.secret.clone()
     } else {
-        let key = vault_key(path, &mut codex, password, KeyMode::CreateIfMissing, false)?
+        let key = vault_key(path, &mut codex, &pass, KeyMode::CreateIfMissing, false)?
             .ok_or("No vault key available.")?;
         crypto::encrypt_record(&parsed.secret, &key, &alias).map_err(|e| e.as_str().to_string())?
     };
@@ -773,8 +812,6 @@ pub fn add_from_otpauth(
         period: parsed.period,
         created_at: parsed.created_at,
     });
-
-    file::ensure_dir_exists(path).map_err(|e| e.to_string())?;
 
     if existed {
         file::create_routine_backup(path).map_err(|e| format!("Warning: Backup failed: {}", e))?;
@@ -795,7 +832,14 @@ pub fn add_batch(
     let parsed_records = OtpAuth::parse_batch(file_path)?;
     let count = parsed_records.len();
 
+    let pass = if *is_unencrypt {
+        None
+    } else {
+        Some(get_effective_password(password)?)
+    };
+
     file::ensure_dir_exists(path).map_err(|e| e.to_string())?;
+    let _lock = file::lock_codex(path)?;
 
     let existed = file::file_exists(path);
     let mut codex = if existed {
@@ -813,12 +857,6 @@ pub fn add_batch(
         }
     }
 
-    let pass = if *is_unencrypt {
-        None
-    } else {
-        Some(get_effective_password(password)?)
-    };
-
     let key = if *is_unencrypt {
         None
     } else {
@@ -829,7 +867,8 @@ pub fn add_batch(
         let secret = if *is_unencrypt {
             parsed.secret.clone()
         } else {
-            crypto::encrypt_record(&parsed.secret, key.as_ref().unwrap(), &parsed.alias)
+            let key = key.as_ref().ok_or("No vault key available.")?;
+            crypto::encrypt_record(&parsed.secret, key, &parsed.alias)
                 .map_err(|e| e.as_str().to_string())?
         };
 
@@ -927,7 +966,19 @@ pub fn import(
         return Err("No records found in import file.".to_string());
     }
 
-    let mut codex = if file::file_exists(codex_path) {
+    // Resolve the import password before taking the lock so an interactive
+    // prompt cannot block other processes.
+    let import_pass = if source_vault.is_some() {
+        Some(get_effective_password(password)?)
+    } else {
+        None
+    };
+
+    file::ensure_dir_exists(codex_path).map_err(|e| e.to_string())?;
+    let _lock = file::lock_codex(codex_path)?;
+
+    let existed = file::file_exists(codex_path);
+    let mut codex = if existed {
         file::read_codex(codex_path)?
     } else {
         file::Codex::default()
@@ -956,12 +1007,10 @@ pub fn import(
         ));
     }
 
-    file::ensure_dir_exists(codex_path).map_err(|e| e.to_string())?;
-
     // A vault envelope carries records encrypted with its own key, so they
     // have to be re-encrypted under the destination vault key.
     let imported = if let Some(source_vault) = source_vault {
-        let pass = get_effective_password(password)?;
+        let pass = import_pass.ok_or("Missing password for the imported vault.")?;
         let source_key = crypto::unwrap_vault_key(&source_vault, &pass)
             .map_err(|_| "Incorrect password for the imported vault.".to_string())?;
         let destination_key = vault_key(
@@ -990,7 +1039,7 @@ pub fn import(
         imported
     };
 
-    if file::file_exists(codex_path) {
+    if existed {
         file::create_routine_backup(codex_path)
             .map_err(|e| format!("Warning: Backup failed: {e}"))?;
     }

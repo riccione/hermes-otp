@@ -105,6 +105,53 @@ pub fn file_exists(path: &Path) -> bool {
     path.exists()
 }
 
+/// Exclusive advisory lock protecting the codex for one read-modify-write.
+///
+/// The lock lives on a sidecar (`<codex>.lock`) because the codex inode is
+/// replaced by a rename on every write; locking the codex itself would leave a
+/// waiter holding a lock on the unlinked inode while another process locks the
+/// new one.
+#[must_use = "the lock is released when this guard is dropped"]
+pub struct CodexLock {
+    file: fs::File,
+}
+
+impl Drop for CodexLock {
+    fn drop(&mut self) {
+        let _ = fs4::FileExt::unlock(&self.file);
+    }
+}
+
+/// Blocks until this process holds the codex write lock.
+pub fn lock_codex(codex_path: &Path) -> Result<CodexLock, String> {
+    let lock_path = lock_path(codex_path);
+
+    let mut options = OpenOptions::new();
+    options.read(true).write(true).create(true);
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+
+    let file = options
+        .open(&lock_path)
+        .map_err(|e| format!("could not open lock file '{}': {e}", lock_path.display()))?;
+
+    // UFCS is required: std::fs::File::lock shadows the fs4 trait method on
+    // newer toolchains.
+    fs4::FileExt::lock(&file).map_err(|e| format!("could not lock the codex: {e}"))?;
+
+    Ok(CodexLock { file })
+}
+
+fn lock_path(codex_path: &Path) -> PathBuf {
+    let mut name = codex_path.as_os_str().to_os_string();
+    name.push(".lock");
+    PathBuf::from(name)
+}
+
 pub fn read_codex(path: &Path) -> Result<Codex, String> {
     let content = std::fs::read_to_string(path).map_err(|_| "Codex not found.")?;
 
@@ -161,12 +208,6 @@ pub fn write_codex_atomic(path: &Path, codex: &Codex) -> Result<(), String> {
 
     overwrite_file_atomic(path, &lines.join("\n"))
         .map_err(|e| format!("Failed to save changes: {e}"))
-}
-
-pub fn alias_exists(alias: &str, path: &Path) -> bool {
-    read_codex(path)
-        .map(|codex| codex.records.iter().any(|r| r.alias == alias))
-        .unwrap_or(false)
 }
 
 pub fn ensure_dir_exists(path: &Path) -> io::Result<()> {

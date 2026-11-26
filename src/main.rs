@@ -17,26 +17,37 @@ use error::EXIT_PARTIAL;
 
 fn main() {
     let cli = Cli::parse();
-    let codex_path = resolve_codex_path(&cli);
+
+    let codex_path = match resolve_codex_path(&cli) {
+        Ok(path) => path,
+        Err(e) => fail(e),
+    };
 
     if let Err(e) = run(cli.command, codex_path) {
-        if e.exit_code == EXIT_PARTIAL {
-            eprintln!("Warning: {}", e.message);
-        } else {
-            eprintln!("Error: {}", e.message);
-        }
-        std::process::exit(e.exit_code);
+        fail(e);
     }
 }
 
-fn resolve_codex_path(cli: &Cli) -> PathBuf {
+fn fail(error: error::AppError) -> ! {
+    if error.exit_code == EXIT_PARTIAL {
+        eprintln!("Warning: {}", error.message);
+    } else {
+        eprintln!("Error: {}", error.message);
+    }
+    std::process::exit(error.exit_code);
+}
+
+fn resolve_codex_path(cli: &Cli) -> Result<PathBuf, error::AppError> {
     // priority 1 => --path
     // priority 2 => env var HERMES_OTP_PATH
     // priority 3 => default location ~/.config/hermes-otp/
-    cli.path
-        .clone()
-        .or_else(|| std::env::var("HERMES_OTP_PATH").ok().map(PathBuf::from))
-        .unwrap_or_else(file::get_default_path)
+    if let Some(path) = &cli.path {
+        return Ok(path.clone());
+    }
+    if let Ok(path) = std::env::var("HERMES_OTP_PATH") {
+        return Ok(PathBuf::from(path));
+    }
+    file::get_default_path().map_err(error::AppError::from)
 }
 
 fn run(command: Commands, codex_path: PathBuf) -> Result<(), error::AppError> {

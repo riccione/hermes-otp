@@ -91,14 +91,20 @@ fn secure_codex_paths(path: &Path) -> io::Result<()> {
     Ok(())
 }
 
-pub fn get_default_path() -> PathBuf {
+/// Returns the default codex path, or an error when no config directory is
+/// available (e.g. a minimal container without HOME).
+pub fn get_default_path() -> Result<PathBuf, String> {
     // using dirs fn to get location of config directory
     default_config_dir()
         .map(|mut path| {
             path.push(FILE_CODEX);
             path
         })
-        .expect("Error: Failed to get config path")
+        .ok_or_else(|| {
+            "Could not determine the config directory; \
+             set HERMES_OTP_PATH or pass --path."
+                .to_string()
+        })
 }
 
 pub fn file_exists(path: &Path) -> bool {

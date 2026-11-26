@@ -2239,3 +2239,77 @@ fn mutating_command_refuses_to_rewrite_a_malformed_codex() -> Result<(), Box<dyn
 
     Ok(())
 }
+
+fn otpauth_batch_file() -> Result<NamedTempFile, Box<dyn std::error::Error>> {
+    let batch = NamedTempFile::new()?;
+    std::fs::write(
+        batch.path(),
+        concat!(
+            "otpauth://totp/Example:alice?secret=JBSWY3DPEHPK3PXP&issuer=Example\n",
+            "otpauth://totp/Example:bob?secret=GEZDGNBVGY3TQOJQ&issuer=Example\n",
+        ),
+    )?;
+    Ok(batch)
+}
+
+#[test]
+fn add_imports_an_encrypted_batch() -> Result<(), Box<dyn std::error::Error>> {
+    let file = NamedTempFile::new()?;
+    let path = file.path();
+    let batch = otpauth_batch_file()?;
+
+    hermes(path)
+        .arg("add")
+        .arg("--import")
+        .arg(batch.path())
+        .args(["--password", PASSWORD])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Successfully imported 2 records."));
+
+    for alias in ["Example:alice", "Example:bob"] {
+        hermes(path)
+            .arg("ls")
+            .args([alias, "-q", "--password", PASSWORD])
+            .assert()
+            .success()
+            .stdout(predicate::str::is_match("^[0-9]{6}")?);
+    }
+
+    let content = std::fs::read_to_string(path)?;
+    assert!(content.starts_with("{\"version\":3"));
+    assert!(content.contains("\"v3$"));
+
+    Ok(())
+}
+
+#[test]
+fn add_imports_a_plaintext_batch() -> Result<(), Box<dyn std::error::Error>> {
+    let file = NamedTempFile::new()?;
+    let path = file.path();
+    let batch = otpauth_batch_file()?;
+
+    hermes(path)
+        .arg("add")
+        .arg("--import")
+        .arg(batch.path())
+        .arg("-u")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Successfully imported 2 records."));
+
+    for alias in ["Example:alice", "Example:bob"] {
+        hermes(path)
+            .arg("ls")
+            .args([alias, "-q"])
+            .assert()
+            .success()
+            .stdout(predicate::str::is_match("^[0-9]{6}")?);
+    }
+
+    let content = std::fs::read_to_string(path)?;
+    assert!(!content.contains("v3$"));
+    assert!(content.contains("\"is_unencrypted\":true"));
+
+    Ok(())
+}

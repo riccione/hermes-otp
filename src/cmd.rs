@@ -860,22 +860,25 @@ pub fn add_batch(
     let key = if *is_unencrypt {
         None
     } else {
-        vault_key(path, &mut codex, &pass, KeyMode::CreateIfMissing, false)?
+        Some(
+            vault_key(path, &mut codex, &pass, KeyMode::CreateIfMissing, false)?
+                .ok_or("No vault key available.")?,
+        )
     };
 
+    let is_unencrypted = key.is_none();
+
     for parsed in parsed_records {
-        let secret = if *is_unencrypt {
-            parsed.secret.clone()
-        } else {
-            let key = key.as_ref().ok_or("No vault key available.")?;
-            crypto::encrypt_record(&parsed.secret, key, &parsed.alias)
-                .map_err(|e| e.as_str().to_string())?
+        let secret = match &key {
+            None => parsed.secret,
+            Some(key) => crypto::encrypt_record(&parsed.secret, key, &parsed.alias)
+                .map_err(|e| e.as_str().to_string())?,
         };
 
         codex.records.push(Record {
             alias: parsed.alias,
             secret,
-            is_unencrypted: *is_unencrypt,
+            is_unencrypted,
             algorithm: parsed.algorithm,
             digits: parsed.digits,
             period: parsed.period,

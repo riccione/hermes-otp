@@ -192,6 +192,15 @@ pub fn read_codex(path: &Path) -> Result<Codex, String> {
 
 /// Writes the header (if any) followed by every record, atomically.
 pub fn write_codex_atomic(path: &Path, codex: &Codex) -> Result<(), String> {
+    // Test-only: widen the read-to-write window so the concurrency test can
+    // prove the lock is held. Release builds ignore it.
+    #[cfg(debug_assertions)]
+    if let Ok(ms) = std::env::var("HERMES_OTP_TEST_WRITE_DELAY_MS")
+        && let Ok(ms) = ms.parse::<u64>()
+    {
+        std::thread::sleep(std::time::Duration::from_millis(ms));
+    }
+
     let mut lines = Vec::with_capacity(codex.records.len() + 1);
 
     if let Some(vault) = &codex.vault {

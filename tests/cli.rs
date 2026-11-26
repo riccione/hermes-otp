@@ -1059,6 +1059,21 @@ mod unix_permissions {
 
         Ok(())
     }
+
+    #[test]
+    fn lock_file_is_owner_only() -> Result<(), Box<dyn std::error::Error>> {
+        let dir = tempfile::tempdir()?;
+        let nested = dir.path().join("nested");
+        let codex = nested.join("codex");
+
+        add_record(&codex, "github");
+
+        let lock = nested.join("codex.lock");
+        assert!(lock.exists(), "lock file should exist");
+        assert_eq!(mode(&lock), 0o600, "lock file must be 0600");
+
+        Ok(())
+    }
 }
 
 #[test]
@@ -2039,6 +2054,63 @@ fn completions_reject_an_unknown_shell() -> Result<(), Box<dyn std::error::Error
         .assert()
         .failure()
         .code(2);
+
+    Ok(())
+}
+
+#[test]
+fn concurrent_adds_keep_both_records() -> Result<(), Box<dyn std::error::Error>> {
+    let binary = env!("CARGO_BIN_EXE_hermes-otp");
+
+    for seed in [true, false] {
+        let dir = tempfile::tempdir()?;
+        let path = dir.path().join("codex");
+
+        if seed {
+            hermes(&path)
+                .arg("add")
+                .args(["seed", "-c", CODE, "--password", PASSWORD])
+                .assert()
+                .success();
+        }
+
+        let spawn = |alias: &str| {
+            std::process::Command::new(binary)
+                .arg("--path")
+                .arg(&path)
+                .args(["add", alias, "-c", CODE, "--password", PASSWORD])
+                .env("HERMES_OTP_TEST_WRITE_DELAY_MS", "400")
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::piped())
+                .spawn()
+        };
+
+        let first = spawn("one")?;
+        let second = spawn("two")?;
+
+        let first = first.wait_with_output()?;
+        let second = second.wait_with_output()?;
+
+        assert!(
+            first.status.success(),
+            "first add failed: {}",
+            String::from_utf8_lossy(&first.stderr)
+        );
+        assert!(
+            second.status.success(),
+            "second add failed: {}",
+            String::from_utf8_lossy(&second.stderr)
+        );
+
+        for alias in ["one", "two"] {
+            hermes(&path)
+                .arg("ls")
+                .args([alias, "-q", "--password", PASSWORD])
+                .assert()
+                .success()
+                .stdout(predicate::str::is_match("^[0-9]{6}")?);
+        }
+    }
 
     Ok(())
 }

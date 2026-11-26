@@ -1041,6 +1041,34 @@ mod unix_permissions {
     }
 
     #[test]
+    fn export_tightens_an_existing_file() -> Result<(), Box<dyn std::error::Error>> {
+        let dir = tempfile::tempdir()?;
+        let nested = dir.path().join("nested");
+        let codex = nested.join("codex");
+        let out = dir.path().join("backup.json");
+
+        add_record(&codex, "github");
+
+        std::fs::write(&out, "old backup")?;
+        std::fs::set_permissions(&out, std::fs::Permissions::from_mode(0o644))?;
+        assert_eq!(mode(&out), 0o644);
+
+        hermes(&codex)
+            .arg("export")
+            .arg("-o")
+            .arg(&out)
+            .assert()
+            .success();
+
+        assert_eq!(mode(&out), 0o600, "export must tighten to 0600");
+
+        let json: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&out)?)?;
+        assert_eq!(json["version"], 3);
+
+        Ok(())
+    }
+
+    #[test]
     fn default_config_dir_is_repaired() -> Result<(), Box<dyn std::error::Error>> {
         let dir = tempfile::tempdir()?;
         let config = dir.path().join("hermes-otp");

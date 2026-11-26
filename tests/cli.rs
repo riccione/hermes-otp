@@ -2114,3 +2114,100 @@ fn concurrent_adds_keep_both_records() -> Result<(), Box<dyn std::error::Error>>
 
     Ok(())
 }
+
+/// A real v3 vault with one extra malformed line appended.
+fn codex_with_bad_line(bad_line: &str) -> Result<NamedTempFile, Box<dyn std::error::Error>> {
+    let file = NamedTempFile::new()?;
+    let path = file.path();
+
+    hermes(path)
+        .arg("add")
+        .args(["seed", "-c", CODE, "--password", PASSWORD])
+        .assert()
+        .success();
+
+    let mut content = std::fs::read_to_string(path)?;
+    content.push_str(bad_line);
+    content.push('\n');
+    std::fs::write(path, content)?;
+
+    // add() backed up the empty file; drop it so tests can assert on backups.
+    let _ = std::fs::remove_file(path.with_extension("bak"));
+
+    Ok(file)
+}
+
+#[test]
+fn ls_rejects_malformed_json_records() -> Result<(), Box<dyn std::error::Error>> {
+    let file = codex_with_bad_line("not json")?;
+    let before = std::fs::read(file.path())?;
+
+    hermes(file.path())
+        .arg("ls")
+        .args(["--password", PASSWORD])
+        .assert()
+        .failure()
+        .code(1)
+        .stdout(predicate::str::is_empty())
+        .stderr(predicate::str::contains("Invalid codex record"))
+        .stderr(predicate::str::contains("line"));
+
+    assert_eq!(
+        std::fs::read(file.path())?,
+        before,
+        "a malformed codex must not be rewritten"
+    );
+
+    Ok(())
+}
+
+#[test]
+fn ls_rejects_invalid_record_shape() -> Result<(), Box<dyn std::error::Error>> {
+    let file = codex_with_bad_line(
+        r#"{"alias":123,"secret":"x","is_unencrypted":false,"algorithm":"sha1","digits":6,"period":30,"created_at":1}"#,
+    )?;
+    let before = std::fs::read(file.path())?;
+
+    hermes(file.path())
+        .arg("ls")
+        .args(["--password", PASSWORD])
+        .assert()
+        .failure()
+        .code(1)
+        .stdout(predicate::str::is_empty())
+        .stderr(predicate::str::contains("Invalid codex record"));
+
+    assert_eq!(std::fs::read(file.path())?, before);
+
+    Ok(())
+}
+
+#[test]
+fn mutating_command_refuses_to_rewrite_a_malformed_codex() -> Result<(), Box<dyn std::error::Error>>
+{
+    let file = codex_with_bad_line("not json")?;
+    let path = file.path();
+    let before = std::fs::read(path)?;
+    let backup = path.with_extension("bak");
+    assert!(!backup.exists());
+
+    hermes(path)
+        .arg("remove")
+        .arg("seed")
+        .assert()
+        .failure()
+        .code(1)
+        .stderr(predicate::str::contains("Invalid codex record"));
+
+    assert_eq!(
+        std::fs::read(path)?,
+        before,
+        "a failed read must not truncate the codex"
+    );
+    assert!(
+        !backup.exists(),
+        "no backup should be taken before the read succeeds"
+    );
+
+    Ok(())
+}

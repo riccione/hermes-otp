@@ -184,8 +184,8 @@ pub fn read_codex(path: &Path) -> Result<Codex, String> {
 
     codex.records = Deserializer::from_str(rest)
         .into_iter::<Record>()
-        .filter_map(|record| record.ok())
-        .collect();
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| format!("Invalid codex record: {e}"))?;
 
     Ok(codex)
 }

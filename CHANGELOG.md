@@ -1,8 +1,34 @@
+## [1.0.2] - 2026-11-27
+
+### Bug Fixes
+
+- *(file)* Serialize codex writes with an advisory lock
+- *(file)* Reject malformed codex records
+- *(export)* Write exports atomically with 0600
+- *(ui)* Never panic when restoring the terminal
+- *(models)* Default created_at on a pre-epoch clock
+- *(file)* Return an error when no config directory is available
+
+### Documentation
+
+- *(readme)* Document the codex write lock
+
+### Refactor
+
+- *(cmd)* Make the batch vault key the single source of truth
+
+### Testing
+
+- Cover concurrent codex writes
+- Cover malformed codex records
+- Cover export permissions when overwriting
+- Cover batch import with and without encryption
 ## [1.0.1] - 2026-11-25
 
 ### Miscellaneous Tasks
 
 - Update dependencies in lock file
+- Release hermes-otp version 1.0.1
 ## [1.0.0] - 2026-11-25
 
 ### Documentation

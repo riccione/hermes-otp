@@ -204,16 +204,14 @@ pub fn add(
         crypto::encrypt_record(&clean_code, &key, alias).map_err(|e| e.as_str().to_string())?
     };
 
-    let record = Record::new(
+    codex.records.push(Record::new(
         alias.to_string(),
         secret,
         *is_unencrypt,
         algorithm.to_string(),
         digits as u8,
         period,
-    );
-
-    codex.records.push(record.clone());
+    ));
 
     if existed {
         file::create_routine_backup(path).map_err(|e| format!("Warning: Backup failed: {}", e))?;
@@ -223,12 +221,7 @@ pub fn add(
 
     println!("Record saved.");
 
-    match otp::generate_otp(
-        &clean_code,
-        &record.algorithm,
-        record.digits as u32,
-        record.period as u64,
-    ) {
+    match otp::generate_otp(&clean_code, algorithm, digits, period as u64) {
         Ok(code) => println!("{code}"),
         Err(_) => println!("Error: failed to generate OTP"),
     }

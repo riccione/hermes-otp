@@ -309,20 +309,25 @@ pub fn backup_pre_v3(path: &Path) -> io::Result<Option<PathBuf>> {
     Ok(Some(backup_path))
 }
 
-/// Writes `data` atomically: a temp file in the same directory is written,
-/// flushed and renamed over `path`, so a crash cannot truncate the codex.
-pub fn overwrite_file_atomic(path: &Path, data: &str) -> io::Result<()> {
-    let content = format!("{}\n", data.trim());
-
+fn temp_path(path: &Path) -> io::Result<PathBuf> {
     let file_name = path
         .file_name()
         .map(|name| name.to_string_lossy().into_owned())
         .unwrap_or_else(|| FILE_CODEX.to_string());
-    let tmp = path.with_file_name(format!(".{file_name}.{}.tmp", std::process::id()));
 
-    let result = (|| -> io::Result<()> {
+    let mut bytes = [0u8; 8];
+    getrandom::fill(&mut bytes).map_err(|_| io::Error::other("randomness unavailable"))?;
+    let suffix = u64::from_ne_bytes(bytes);
+
+    Ok(path.with_file_name(format!(".{file_name}.{suffix:016x}.tmp")))
+}
+
+fn create_temp_file(path: &Path) -> io::Result<(fs::File, PathBuf)> {
+    for _ in 0..16 {
+        let tmp = temp_path(path)?;
+
         let mut options = OpenOptions::new();
-        options.write(true).create(true).truncate(true);
+        options.write(true).create_new(true);
 
         #[cfg(unix)]
         {
@@ -330,19 +335,104 @@ pub fn overwrite_file_atomic(path: &Path, data: &str) -> io::Result<()> {
             options.mode(0o600);
         }
 
-        let mut file = options.open(&tmp)?;
-        file.write_all(content.as_bytes())?;
-        file.sync_all()?;
-        drop(file);
+        match options.open(&tmp) {
+            Ok(file) => return Ok((file, tmp)),
+            Err(e) if e.kind() == io::ErrorKind::AlreadyExists => continue,
+            Err(e) => return Err(e),
+        }
+    }
 
-        secure_file(&tmp)?;
-        std::fs::rename(&tmp, path)?;
-        secure_codex_paths(path)
-    })();
+    Err(io::Error::new(
+        io::ErrorKind::AlreadyExists,
+        "could not create a unique temporary file",
+    ))
+}
+
+#[cfg(unix)]
+fn sync_parent_dir(path: &Path) -> io::Result<()> {
+    let parent = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+
+    fs::File::open(parent)?.sync_all()
+}
+
+#[cfg(not(unix))]
+fn sync_parent_dir(_path: &Path) -> io::Result<()> {
+    Ok(())
+}
+
+/// Writes `data` atomically: a temp file in the same directory is written,
+/// flushed and renamed over `path`, so a crash cannot truncate the codex.
+pub fn overwrite_file_atomic(path: &Path, data: &str) -> io::Result<()> {
+    let content = format!("{}\n", data.trim());
+    let (mut file, tmp) = create_temp_file(path)?;
+
+    let write_result = file
+        .write_all(content.as_bytes())
+        .and_then(|()| file.sync_all());
+    drop(file);
+
+    let result = write_result
+        .and_then(|()| secure_file(&tmp))
+        .and_then(|()| std::fs::rename(&tmp, path))
+        .and_then(|()| sync_parent_dir(path))
+        .and_then(|()| secure_codex_paths(path));
 
     if result.is_err() {
         let _ = std::fs::remove_file(&tmp);
     }
 
     result
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{overwrite_file_atomic, temp_path};
+    use std::path::Path;
+
+    #[test]
+    fn temp_paths_are_random_and_hidden() {
+        let path = Path::new("/tmp/codex");
+        let first = temp_path(path).unwrap();
+        let second = temp_path(path).unwrap();
+
+        assert_ne!(first, second);
+        let name = first.file_name().unwrap().to_string_lossy();
+        assert!(name.starts_with(".codex."), "{name}");
+        assert!(name.ends_with(".tmp"), "{name}");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn atomic_write_does_not_follow_planted_symlinks() {
+        use std::os::unix::fs::symlink;
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("codex");
+        let victim = dir.path().join("victim");
+        std::fs::write(&victim, "sentinel").unwrap();
+
+        // The old implementation used .<name>.<pid>.tmp.
+        let old_tmp = dir
+            .path()
+            .join(format!(".codex.{}.tmp", std::process::id()));
+        symlink(&victim, &old_tmp).unwrap();
+
+        overwrite_file_atomic(&path, "payload").unwrap();
+
+        assert_eq!(std::fs::read_to_string(&victim).unwrap(), "sentinel");
+        assert!(path.exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn parent_directory_is_syncable() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("codex");
+        std::fs::write(&path, "x").unwrap();
+
+        super::sync_parent_dir(&path).unwrap();
+    }
 }

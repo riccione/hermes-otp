@@ -6,7 +6,6 @@ use crate::models::Record;
 use crate::otp;
 use crate::otpauth::OtpAuth;
 use crate::ui::Table;
-use data_encoding::BASE32_NOPAD;
 use nucleo_matcher::{Config, Utf32Str};
 use std::io::Write;
 use std::path::Path;
@@ -14,15 +13,6 @@ use std::path::Path;
 // Shown in place of the code when a record cannot be decrypted or the secret
 // is not valid base32.
 const OTP_ERROR_TEXT: &str = "Error Invalid secret or decryption failed";
-
-fn sanitize_and_validate_code(code: &str) -> Result<String, String> {
-    let clean = code.to_uppercase().replace("=", "");
-    BASE32_NOPAD
-        .decode(clean.as_bytes())
-        .map_err(|e| format!("Invalid Base32 code: {e}"))?;
-
-    Ok(clean)
-}
 
 fn get_effective_password(password: &Option<String>) -> Result<String, String> {
     password
@@ -178,7 +168,7 @@ pub fn add(
     is_unencrypt: &bool,
     password: &Option<String>,
 ) -> Result<(), String> {
-    let clean_code = sanitize_and_validate_code(code)?;
+    let clean_code = otp::normalize_secret(code)?;
 
     // reject parameters the generator could not honor
     otp::validate_params(algorithm, digits, period)?;
@@ -253,7 +243,7 @@ pub fn update_code(
     is_unencrypt: &bool,
     password: &Option<String>,
 ) -> Result<(), String> {
-    let clean_code = sanitize_and_validate_code(new_code)?;
+    let clean_code = otp::normalize_secret(new_code)?;
 
     let _lock = file::lock_codex(path)?;
 

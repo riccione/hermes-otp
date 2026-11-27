@@ -348,6 +348,21 @@ fn create_temp_file(path: &Path) -> io::Result<(fs::File, PathBuf)> {
     ))
 }
 
+#[cfg(unix)]
+fn sync_parent_dir(path: &Path) -> io::Result<()> {
+    let parent = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+
+    fs::File::open(parent)?.sync_all()
+}
+
+#[cfg(not(unix))]
+fn sync_parent_dir(_path: &Path) -> io::Result<()> {
+    Ok(())
+}
+
 /// Writes `data` atomically: a temp file in the same directory is written,
 /// flushed and renamed over `path`, so a crash cannot truncate the codex.
 pub fn overwrite_file_atomic(path: &Path, data: &str) -> io::Result<()> {
@@ -362,6 +377,7 @@ pub fn overwrite_file_atomic(path: &Path, data: &str) -> io::Result<()> {
     let result = write_result
         .and_then(|()| secure_file(&tmp))
         .and_then(|()| std::fs::rename(&tmp, path))
+        .and_then(|()| sync_parent_dir(path))
         .and_then(|()| secure_codex_paths(path));
 
     if result.is_err() {
@@ -408,5 +424,15 @@ mod tests {
 
         assert_eq!(std::fs::read_to_string(&victim).unwrap(), "sentinel");
         assert!(path.exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn parent_directory_is_syncable() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("codex");
+        std::fs::write(&path, "x").unwrap();
+
+        super::sync_parent_dir(&path).unwrap();
     }
 }

@@ -14,6 +14,20 @@ use std::path::Path;
 // is not valid base32.
 const OTP_ERROR_TEXT: &str = "Error Invalid secret or decryption failed";
 
+/// ASCII case-insensitive substring search without allocating.
+fn contains_ignore_ascii_case(haystack: &str, needle: &str) -> bool {
+    let haystack = haystack.as_bytes();
+    let needle = needle.as_bytes();
+
+    if needle.is_empty() {
+        return true;
+    }
+
+    haystack
+        .windows(needle.len())
+        .any(|window| window.eq_ignore_ascii_case(needle))
+}
+
 fn get_effective_password(password: &Option<String>) -> Result<String, String> {
     password
         .as_deref()
@@ -439,11 +453,18 @@ pub fn ls(
             } else {
                 // partial match is case-insensitive
                 let filter_lower = filter.to_lowercase();
+                let filter_is_ascii = filter.is_ascii();
                 codex
                     .records
                     .iter()
                     .enumerate()
-                    .filter(|(_, r)| r.alias.to_lowercase().contains(&filter_lower))
+                    .filter(|(_, r)| {
+                        if filter_is_ascii && r.alias.is_ascii() {
+                            contains_ignore_ascii_case(&r.alias, filter)
+                        } else {
+                            r.alias.to_lowercase().contains(&filter_lower)
+                        }
+                    })
                     .map(|(index, _)| index)
                     .collect()
             }
@@ -1054,7 +1075,7 @@ pub fn import(
 
 #[cfg(test)]
 mod tests {
-    use super::progress_bar;
+    use super::{contains_ignore_ascii_case, progress_bar};
 
     #[test]
     fn bar_fills_against_the_record_period() {
@@ -1074,5 +1095,14 @@ mod tests {
     #[test]
     fn bar_does_not_divide_by_zero() {
         assert_eq!(progress_bar(0, 0, 20), format!("[{}]", ".".repeat(20)));
+    }
+
+    #[test]
+    fn ascii_substring_match_is_case_insensitive() {
+        assert!(contains_ignore_ascii_case("GitHub", "hub"));
+        assert!(contains_ignore_ascii_case("GitHub", "GITHUB"));
+        assert!(contains_ignore_ascii_case("GitHub", ""));
+        assert!(!contains_ignore_ascii_case("GitHub", "gitlab"));
+        assert!(!contains_ignore_ascii_case("ab", "abc"));
     }
 }

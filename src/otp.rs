@@ -51,6 +51,10 @@ pub fn get_remaining_seconds(period: u64) -> u64 {
 pub fn normalize_secret(code: &str) -> Result<String, String> {
     let clean = code.to_uppercase().replace('=', "");
 
+    if clean.is_empty() {
+        return Err("Invalid Base32 code: secret is empty".to_string());
+    }
+
     BASE32_NOPAD
         .decode(clean.as_bytes())
         .map_err(|e| format!("Invalid Base32 code: {e}"))?;
@@ -315,5 +319,11 @@ mod tests {
     #[test]
     fn normalize_secret_rejects_invalid_characters() {
         assert!(normalize_secret("not base32!").is_err());
+    }
+
+    #[test]
+    fn normalize_secret_rejects_empty_secrets() {
+        assert!(normalize_secret("").is_err());
+        assert!(normalize_secret("===").is_err());
     }
 }

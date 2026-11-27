@@ -34,8 +34,8 @@ impl OtpAuth {
 
         let secret = query_params
             .get("secret")
-            .ok_or("Missing mandatory 'secret' parameter in URI")?
-            .clone();
+            .ok_or("Missing mandatory 'secret' parameter in URI")?;
+        let secret = crate::otp::normalize_secret(secret)?;
 
         let issuer = query_params.get("issuer");
         let alias = match issuer {
@@ -222,5 +222,36 @@ mod tests {
         tmp_file.write_all(file_contents.as_bytes()).unwrap();
         let batch_res = OtpAuth::parse_batch(tmp_file.path());
         assert!(batch_res.is_err());
+    }
+
+    #[test]
+    fn test_normalizes_lowercase_secret() {
+        let uri = "otpauth://totp/App:user?secret=jbswy3dpehpk3pxp";
+        assert_eq!(OtpAuth::parse(uri).unwrap().secret, "JBSWY3DPEHPK3PXP");
+    }
+
+    #[test]
+    fn test_rejects_invalid_secret() {
+        let uri = "otpauth://totp/App:user?secret=not-base32!";
+        let err = OtpAuth::parse(uri).unwrap_err();
+        assert!(err.contains("Invalid Base32 code"), "{err}");
+    }
+
+    #[test]
+    fn test_rejects_empty_secret() {
+        let uri = "otpauth://totp/App:user?secret=";
+        let err = OtpAuth::parse(uri).unwrap_err();
+        assert!(err.contains("empty"), "{err}");
+    }
+
+    #[test]
+    fn test_parse_batch_rejects_invalid_secret() {
+        let mut tmp_file = NamedTempFile::new().unwrap();
+        let file_contents = "\
+            otpauth://totp/Service:Good?secret=JBSWY3DPEHPK3PXP\n\
+            otpauth://totp/Service:Bad?secret=not-base32!\n\
+        ";
+        tmp_file.write_all(file_contents.as_bytes()).unwrap();
+        assert!(OtpAuth::parse_batch(tmp_file.path()).is_err());
     }
 }

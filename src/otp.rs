@@ -47,6 +47,17 @@ pub fn get_remaining_seconds(period: u64) -> u64 {
     period - (now % period)
 }
 
+/// Normalizes a Base32 secret for storage: uppercase, unpadded, and valid.
+pub fn normalize_secret(code: &str) -> Result<String, String> {
+    let clean = code.to_uppercase().replace('=', "");
+
+    BASE32_NOPAD
+        .decode(clean.as_bytes())
+        .map_err(|e| format!("Invalid Base32 code: {e}"))?;
+
+    Ok(clean)
+}
+
 /// Validates the parameters accepted by [`generate_otp`], returning a message
 /// suitable for the user when they are out of range.
 pub fn validate_params(algorithm: &str, digits: u32, period: u32) -> Result<(), String> {
@@ -290,5 +301,19 @@ mod tests {
         let err = validate_params("md5", 6, 30).unwrap_err();
         assert!(err.contains("algorithm=md5"), "{err}");
         assert!(err.contains("Only sha1, sha256 and sha512"), "{err}");
+    }
+
+    #[test]
+    fn normalize_secret_uppercases_and_strips_padding() {
+        assert_eq!(
+            normalize_secret("jbswy3dpehpk3pxp").unwrap(),
+            "JBSWY3DPEHPK3PXP"
+        );
+        assert_eq!(normalize_secret("JBSWY3DP=").unwrap(), "JBSWY3DP");
+    }
+
+    #[test]
+    fn normalize_secret_rejects_invalid_characters() {
+        assert!(normalize_secret("not base32!").is_err());
     }
 }

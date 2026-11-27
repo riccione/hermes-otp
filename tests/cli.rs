@@ -2422,3 +2422,42 @@ fn add_otpauth_normalizes_a_lowercase_secret() -> Result<(), Box<dyn std::error:
 
     Ok(())
 }
+
+#[test]
+fn ls_partial_match_is_case_insensitive_for_ascii_and_unicode()
+-> Result<(), Box<dyn std::error::Error>> {
+    let file = NamedTempFile::new()?;
+    let path = file.path();
+
+    hermes(path)
+        .arg("add")
+        .args(["GitHub", "-c", CODE, "-u"])
+        .assert()
+        .success();
+
+    hermes(path)
+        .arg("add")
+        .args(["Ünïcode", "-c", CODE, "-u"])
+        .assert()
+        .success();
+
+    for filter in ["github", "GITHUB", "git"] {
+        hermes(path)
+            .arg("ls")
+            .args([filter, "-q"])
+            .assert()
+            .success()
+            .stdout(predicate::str::is_match("^[0-9]{6}")?);
+    }
+
+    for filter in ["ünï", "ÜNÏ"] {
+        hermes(path)
+            .arg("ls")
+            .args([filter, "-q"])
+            .assert()
+            .success()
+            .stdout(predicate::str::is_match("^[0-9]{6}")?);
+    }
+
+    Ok(())
+}

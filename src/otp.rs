@@ -65,10 +65,10 @@ pub fn normalize_secret(code: &str) -> Result<String, String> {
 /// Validates the parameters accepted by [`generate_otp`], returning a message
 /// suitable for the user when they are out of range.
 pub fn validate_params(algorithm: &str, digits: u32, period: u32) -> Result<(), String> {
-    if !matches!(
-        algorithm.to_lowercase().as_str(),
-        "sha1" | "sha256" | "sha512"
-    ) {
+    if !(algorithm.eq_ignore_ascii_case("sha1")
+        || algorithm.eq_ignore_ascii_case("sha256")
+        || algorithm.eq_ignore_ascii_case("sha512"))
+    {
         return Err(format!(
             "Unsupported OTP parameter (algorithm={algorithm}). \
              Only sha1, sha256 and sha512 are supported."
@@ -126,11 +126,14 @@ fn generate_otp_at(
         .decode(secret.as_bytes())
         .map_err(|_| OtpError::InvalidBase32)?;
 
-    match algorithm.to_lowercase().as_str() {
-        "sha1" => Ok(totp_custom::<Sha1>(period, digits, &decoded, time)),
-        "sha256" => Ok(totp_custom::<Sha256>(period, digits, &decoded, time)),
-        "sha512" => Ok(totp_custom::<Sha512>(period, digits, &decoded, time)),
-        _ => Err(OtpError::UnsupportedAlgorithm),
+    if algorithm.eq_ignore_ascii_case("sha1") {
+        Ok(totp_custom::<Sha1>(period, digits, &decoded, time))
+    } else if algorithm.eq_ignore_ascii_case("sha256") {
+        Ok(totp_custom::<Sha256>(period, digits, &decoded, time))
+    } else if algorithm.eq_ignore_ascii_case("sha512") {
+        Ok(totp_custom::<Sha512>(period, digits, &decoded, time))
+    } else {
+        Err(OtpError::UnsupportedAlgorithm)
     }
 }
 
@@ -230,7 +233,9 @@ mod tests {
 
         let lower = generate_otp_at(&secret, "sha1", 8, 30, 59).unwrap();
         let upper = generate_otp_at(&secret, "SHA1", 8, 30, 59).unwrap();
+        let mixed = generate_otp_at(&secret, "ShA1", 8, 30, 59).unwrap();
         assert_eq!(lower, upper);
+        assert_eq!(lower, mixed);
     }
 
     #[test]
@@ -267,7 +272,7 @@ mod tests {
 
     #[test]
     fn validate_params_accepts_supported_values() {
-        for algorithm in ["sha1", "sha256", "sha512", "SHA256"] {
+        for algorithm in ["sha1", "sha256", "sha512", "SHA256", "ShA512"] {
             assert!(validate_params(algorithm, 6, 30).is_ok(), "{algorithm}");
         }
 

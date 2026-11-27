@@ -2347,3 +2347,78 @@ fn ls_json_tolerates_a_closed_pipe() -> Result<(), Box<dyn std::error::Error>> {
 
     Ok(())
 }
+
+#[test]
+fn add_otpauth_rejects_an_invalid_secret() -> Result<(), Box<dyn std::error::Error>> {
+    let file = NamedTempFile::new()?;
+    let path = file.path();
+
+    hermes(path)
+        .arg("add")
+        .arg("--otpauth")
+        .arg("otpauth://totp/App:user?secret=not-base32!")
+        .assert()
+        .failure()
+        .code(1)
+        .stderr(predicate::str::contains("Invalid Base32 code"));
+
+    assert!(std::fs::read_to_string(path)?.is_empty());
+
+    Ok(())
+}
+
+#[test]
+fn add_import_rejects_an_invalid_batch_secret() -> Result<(), Box<dyn std::error::Error>> {
+    let file = NamedTempFile::new()?;
+    let path = file.path();
+    let batch = NamedTempFile::new()?;
+
+    std::fs::write(
+        batch.path(),
+        "otpauth://totp/Service:good?secret=JBSWY3DPEHPK3PXP\n\
+         otpauth://totp/Service:bad?secret=not-base32!\n",
+    )?;
+    let before = std::fs::read(path)?;
+
+    hermes(path)
+        .arg("add")
+        .arg("--import")
+        .arg(batch.path())
+        .assert()
+        .failure()
+        .code(1)
+        .stderr(predicate::str::contains("Invalid Base32 code"));
+
+    assert_eq!(std::fs::read(path)?, before);
+
+    Ok(())
+}
+
+#[test]
+fn add_otpauth_normalizes_a_lowercase_secret() -> Result<(), Box<dyn std::error::Error>> {
+    let file = NamedTempFile::new()?;
+    let path = file.path();
+
+    hermes(path)
+        .arg("add")
+        .arg("--otpauth")
+        .arg("otpauth://totp/App:user?secret=jbswy3dpehpk3pxp")
+        .arg("-u")
+        .assert()
+        .success();
+
+    let content = std::fs::read_to_string(path)?;
+    assert!(
+        content.contains(r#""secret":"JBSWY3DPEHPK3PXP""#),
+        "{content}"
+    );
+
+    hermes(path)
+        .arg("ls")
+        .args(["App:user", "-q"])
+        .assert()
+        .success()
+        .stdout(predicate::str::is_match("^[0-9]{6}")?);
+
+    Ok(())
+}

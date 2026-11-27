@@ -2313,3 +2313,37 @@ fn add_imports_a_plaintext_batch() -> Result<(), Box<dyn std::error::Error>> {
 
     Ok(())
 }
+
+#[test]
+fn ls_json_tolerates_a_closed_pipe() -> Result<(), Box<dyn std::error::Error>> {
+    let file = NamedTempFile::new()?;
+    let mut content = String::new();
+    for i in 0..1000 {
+        content.push_str(&format!(
+            r#"{{"alias":"a{i}","secret":"{CODE}","is_unencrypted":true,"algorithm":"sha1","digits":6,"period":30,"created_at":1}}"#
+        ));
+        content.push('\n');
+    }
+    std::fs::write(file.path(), content)?;
+
+    let mut child = std::process::Command::new(env!("CARGO_BIN_EXE_hermes-otp"))
+        .arg("--path")
+        .arg(file.path())
+        .args(["ls", "-f", "json"])
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()?;
+
+    // Close the read end before the child writes. The output is larger than the
+    // pipe buffer, so the write must fail with EPIPE.
+    drop(child.stdout.take());
+
+    let output = child.wait_with_output()?;
+    assert!(
+        output.status.success(),
+        "ls must tolerate a closed pipe: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    Ok(())
+}

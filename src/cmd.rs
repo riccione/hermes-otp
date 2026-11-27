@@ -8,6 +8,7 @@ use crate::otpauth::OtpAuth;
 use crate::ui::Table;
 use data_encoding::BASE32_NOPAD;
 use nucleo_matcher::{Config, Utf32Str};
+use std::io::Write;
 use std::path::Path;
 
 // Shown in place of the code when a record cannot be decrypted or the secret
@@ -566,7 +567,7 @@ pub fn ls(
         .collect();
 
     match format {
-        OutputFormat::Json => print_json(&rows, alias_filter.is_some()),
+        OutputFormat::Json => print_json(&rows, alias_filter.is_some())?,
         OutputFormat::Table => {
             if quiet {
                 print_table(&rows, alias_filter.is_some(), quiet);
@@ -706,7 +707,7 @@ fn row_to_json(row: &Row) -> serde_json::Value {
 
 /// Prints rows as JSON. A single alias that matches exactly one record is
 /// printed as an object, so `jq .otp` works without indexing.
-fn print_json(rows: &[Row], single: bool) {
+fn print_json(rows: &[Row], single: bool) -> Result<(), String> {
     let entries: Vec<serde_json::Value> = rows.iter().map(row_to_json).collect();
 
     let output = if single && entries.len() == 1 {
@@ -715,7 +716,17 @@ fn print_json(rows: &[Row], single: bool) {
         serde_json::Value::Array(entries)
     };
 
-    println!("{}", serde_json::to_string_pretty(&output).unwrap());
+    let json =
+        serde_json::to_string_pretty(&output).map_err(|e| format!("serialization error: {e}"))?;
+
+    let mut stdout = std::io::stdout();
+    if let Err(e) = writeln!(stdout, "{json}")
+        && e.kind() != std::io::ErrorKind::BrokenPipe
+    {
+        return Err(e.to_string());
+    }
+
+    Ok(())
 }
 
 pub fn rename(

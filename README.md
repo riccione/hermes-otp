@@ -34,8 +34,11 @@ $ hermes-otp ls -q github
 621555
 ```
 
-The live view refreshes once a second and exits on any keypress. `-q` skips the
-countdown bar and the prompt, so it is safe to pipe.
+The live view refreshes once a second. When the table fits the terminal it
+updates in place and exits on any keypress. Taller tables open a pager:
+`Up`/`Down`, `PgUp`/`PgDn`, and `Home`/`End` scroll, `q` quits, and the codes
+keep refreshing. `-q` skips the countdown bar and the prompt, so it is safe to
+pipe.
 
 ## Why Hermes-OTP?
 

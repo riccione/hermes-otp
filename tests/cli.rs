@@ -2461,3 +2461,48 @@ fn ls_partial_match_is_case_insensitive_for_ascii_and_unicode()
 
     Ok(())
 }
+
+#[test]
+fn remove_missing_alias_keeps_the_backup() -> Result<(), Box<dyn std::error::Error>> {
+    let file = NamedTempFile::new()?;
+    let path = file.path();
+
+    hermes(path)
+        .arg("add")
+        .args(["one", "-c", CODE, "--password", PASSWORD])
+        .assert()
+        .success();
+
+    hermes(path)
+        .arg("add")
+        .args(["two", "-c", CODE, "--password", PASSWORD])
+        .assert()
+        .success();
+
+    let backup = path.with_extension("bak");
+    assert!(backup.exists(), "the second add should create codex.bak");
+
+    let codex_before = std::fs::read(path)?;
+    let backup_before = std::fs::read(&backup)?;
+
+    hermes(path)
+        .arg("remove")
+        .arg("missing")
+        .assert()
+        .failure()
+        .code(1)
+        .stderr(predicate::str::contains("No record for 'missing' found"));
+
+    assert_eq!(
+        std::fs::read(path)?,
+        codex_before,
+        "a failed remove must not change the codex"
+    );
+    assert_eq!(
+        std::fs::read(&backup)?,
+        backup_before,
+        "a failed remove must not overwrite the backup"
+    );
+
+    Ok(())
+}
